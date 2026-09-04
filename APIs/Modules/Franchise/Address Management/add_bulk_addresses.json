@@ -1,0 +1,20 @@
+[
+  {
+    "addressType": "SHIPPING",
+    "addressLine1": "100 Warehouse Lane",
+    "city": "Thane",
+    "state": "Maharashtra",
+    "country": "India",
+    "postalCode": "400601",
+    "isPrimary": false
+  },
+  {
+    "addressType": "BILLING",
+    "addressLine1": "200 Office Park",
+    "city": "Navi Mumbai",
+    "state": "Maharashtra",
+    "country": "India",
+    "postalCode": "400703",
+    "isPrimary": false
+  }
+]

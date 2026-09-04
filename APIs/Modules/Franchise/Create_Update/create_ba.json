@@ -1,0 +1,37 @@
+{
+  "onboardingType": "FRANCHISE",
+  "onboardingSubtype": "BA",
+  "name": "Priya Enterprises BA Partner",
+  "panNumber": "CDEFG3456H",
+  "effectiveDate": "2026-09-01",
+  "contactPerson": {
+    "firstName": "Priya",
+    "lastName": "Sharma",
+    "email": "priya.sharma@example.com",
+    "phone": "9876543212",
+    "designation": "Managing Director",
+    "isPrimary": true
+  },
+  "addresses": [
+    {
+      "addressType": "OPERATIONAL",
+      "addressLine1": "456 Business Park",
+      "addressLine2": "Sector Five",
+      "city": "Delhi",
+      "state": "Delhi",
+      "country": "India",
+      "postalCode": "110001",
+      "isPrimary": true
+    }
+  ],
+  "bankDetails": [
+    {
+      "bankAccountNumber": "987654321098",
+      "bankIfsc": "SBIN0001234",
+      "bankName": "State Bank of India",
+      "accountHolderName": "Priya Sharma",
+      "accountType": "CURRENT",
+      "isPrimary": true
+    }
+  ]
+}

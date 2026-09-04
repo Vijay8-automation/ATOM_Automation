@@ -1,0 +1,10 @@
+{
+  "addressType": "OPERATIONAL",
+  "addressLine1": "123 Main Road Updated",
+  "addressLine2": "Near New Mall",
+  "city": "Mumbai",
+  "state": "Maharashtra",
+  "country": "India",
+  "postalCode": "400003",
+  "isPrimary": true
+}

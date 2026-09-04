@@ -1,0 +1,10 @@
+{
+  "addressType": "BILLING",
+  "addressLine1": "999 Finance Street",
+  "addressLine2": "Block A",
+  "city": "Mumbai",
+  "state": "Maharashtra",
+  "country": "India",
+  "postalCode": "400005",
+  "isPrimary": false
+}

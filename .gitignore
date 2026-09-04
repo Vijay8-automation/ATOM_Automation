@@ -1,0 +1,10 @@
+node_modules/
+/test-results/
+/playwright-report/
+/playwright-report-ui/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+TestData/authToken.json
+*.log
+.DS_Store

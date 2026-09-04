@@ -1,0 +1,39 @@
+{
+  "name": "atom_automation",
+  "version": "1.0.0",
+  "description": "ATOM Automation Framework",
+  "main": "index.js",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:login": "npx playwright test APITests/Modules/UserIAMService --project=api --reporter=list",
+    "test:login:ui": "npx playwright test -g \"Authentication\" --project=chromium --headed",
+    "test:franchise": "npx playwright test APITests/Modules/Franchise --project=api --reporter=list",
+    "test:franchise:create": "npx playwright test \"APITests/Modules/Franchise/Create_Update\" --project=api --reporter=list",
+    "test:validation": "npx playwright test \"APITests/Modules/Franchise/Create_Update/createFranchiseMandatoryFields.spec.ts\" --project=api --workers=1",
+    "test:franchise:retrieve": "npx playwright test \"APITests/Modules/Franchise/Retrieve\" --project=api --reporter=list",
+    "test:franchise:approval": "npx playwright test \"APITests/Modules/Franchise/Approval\" --project=api --reporter=list",
+    "test:franchise:lifecycle": "npx playwright test \"APITests/Modules/Franchise/Lifecycle\" --project=api --reporter=list",
+    "test:franchise:address": "npx playwright test \"APITests/Modules/Franchise/Address Management\" --project=api --reporter=list",
+    "test:franchise:applink": "npx playwright test \"APITests/Modules/Franchise/Application Link\" --project=api --reporter=list",
+    "test:franchise:verification": "npx playwright test \"APITests/Modules/Franchise/Verification_Supporting\" --project=api --reporter=list",
+    "test:api": "npx playwright test --project=api",
+    "test:ui": "npx playwright test --project=chromium",
+    "test:ui:branch": "npx playwright test -g \"TC01\" --project=chromium",
+    "test:ui:headed": "npx playwright test --project=chromium --headed",
+    "test:ci": "npx playwright test",
+    "report": "npx playwright show-report",
+    "report:api": "npx playwright show-report playwright-report",
+    "report:ui": "npx playwright show-report playwright-report-ui"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.4.1"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}

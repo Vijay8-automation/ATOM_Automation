@@ -1,0 +1,10 @@
+{
+  "username": "SONY",
+  "password": "Kuchbhi@123",
+  "deviceInfo": {
+    "deviceId": "device-123456",
+    "deviceType": "WEB",
+    "ipAddress": "192.168.1.100",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  }
+}

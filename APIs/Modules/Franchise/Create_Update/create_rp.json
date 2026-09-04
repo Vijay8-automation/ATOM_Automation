@@ -1,0 +1,36 @@
+{
+  "onboardingType": "FRANCHISE",
+  "onboardingSubtype": "RP",
+  "name": "Suresh Transport RP Partner",
+  "panNumber": "BCDEF2345G",
+  "effectiveDate": "2026-09-01",
+  "contactPerson": {
+    "firstName": "Suresh",
+    "lastName": "Singh",
+    "email": "suresh.singh@example.com",
+    "phone": "9876543211",
+    "designation": "Director",
+    "isPrimary": true
+  },
+  "addresses": [
+    {
+      "addressType": "OPERATIONAL",
+      "addressLine1": "45 Transport Nagar",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "country": "India",
+      "postalCode": "411001",
+      "isPrimary": true
+    }
+  ],
+  "data": {
+    "vehicles": [
+      {
+        "vehicleType": "MAHINDRA BOLERO",
+        "registrationNo": "MH12CD5678",
+        "yearOfMfg": 2019,
+        "insuranceStatus": "VALID"
+      }
+    ]
+  }
+}

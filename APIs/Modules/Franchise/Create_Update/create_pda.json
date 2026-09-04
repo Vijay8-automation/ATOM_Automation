@@ -1,0 +1,48 @@
+{
+  "onboardingType": "FRANCHISE",
+  "onboardingSubtype": "PDA",
+  "name": "Ramesh Logistics PDA Partner",
+  "panNumber": "ABCDE1234F",
+  "effectiveDate": "2026-09-01",
+  "description": "Pickup and Delivery Associate franchise partner",
+  "contactPerson": {
+    "firstName": "Ramesh",
+    "lastName": "Kumar",
+    "email": "ramesh.kumar1@example.com",
+    "phone": "9876543219",
+    "designation": "Owner",
+    "isPrimary": true
+  },
+  "addresses": [
+    {
+      "addressType": "OPERATIONAL",
+      "addressLine1": "123 Main Road",
+      "addressLine2": "Near City Mall",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "postalCode": "400001",
+      "isPrimary": true
+    }
+  ],
+  "bankDetails": [
+    {
+      "bankAccountNumber": "123456789012",
+      "bankIfsc": "HDFC0001234",
+      "bankName": "HDFC Bank",
+      "accountHolderName": "Ramesh Kumar",
+      "accountType": "CURRENT",
+      "isPrimary": true
+    }
+  ],
+  "data": {
+    "vehicles": [
+      {
+        "vehicleType": "TATA ACE",
+        "registrationNo": "MH01AB1234",
+        "yearOfMfg": 2020,
+        "insuranceStatus": "VALID"
+      }
+    ]
+  }
+}

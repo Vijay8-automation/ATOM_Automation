@@ -1,0 +1,14 @@
+{
+  "info": {
+    "_postman_id": "c9b62ba9-4498-42ec-9353-496dcf39d4f0",
+    "name": "ATOM - Franchise Onboarding",
+    "description": "Source-verified Postman Collection for Franchise Partner Onboarding.\n\nService: generic_onboarding_core_service\nServer Port: 8085\nContext-Path: /generic-onboarding/v1\nController Base: /api/entities\nFull Base URL: {{baseUrl}}/generic-onboarding/v1/api/entities\n\nStrategy Bean: @Component(\"franchise\") — resolved by OnboardingStrategyFactory via type.toLowerCase()\nEntity Type: FRANCHISE\nSubtypes (source-confirmed from FranchiseCompletenessValidator):\n  PDA — vehicle track (requires ≥1 vehicle in data.vehicles before approval)\n  RP  — vehicle track (requires ≥1 vehicle in data.vehicles before approval)\n  BA  — facility track (requires ≥1 address before approval)\n  BC  — facility track (requires ≥1 address before approval)\n\nAuthentication (GatewayUserContextFilter):\n  Authenticated — all endpoints EXCEPT application-link token routes\n    Required headers: x-user-id (UUID), x-company-id (UUID)\n  Public — /api/entities/application/{token}/... routes are exempt from the filter\n\nHTTP Status Codes (from GlobalExceptionHandler + controllers):\n  200 OK  — all successful controller responses (ResponseEntity.ok(...))\n  400 Bad Request — VALIDATION_ERROR, INVALID_ARGUMENT, BAD_REQUEST, missing headers\n  404 Not Found  — ENTITY_NOT_FOUND, RESOURCE_NOT_FOUND\n  409 Conflict   — DUPLICATE_ENTITY, INVALID_STATE_TRANSITION, CONFLICT\n  502 Bad Gateway — EXTERNAL_SERVICE_ERROR (e.g. Approval Service unreachable)\n\nAll success responses use wrapper: { status: 'success', message: '...', data: {...}, timestamp: '...' }\nAll error responses use wrapper:   { status: 'error', code: '...', message: '...', details: '...', timestamp: '...', path: '...', requestId: '...' }",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8085"
+    }
+  ]
+}

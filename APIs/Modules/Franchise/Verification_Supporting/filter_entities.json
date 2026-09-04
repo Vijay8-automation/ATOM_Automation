@@ -1,0 +1,14 @@
+{
+  "entityTypes": [
+    "FRANCHISE"
+  ],
+  "entitySubTypes": [
+    "PDA"
+  ],
+  "statusCodes": [
+    "DRAFT",
+    "PENDING_APPROVAL"
+  ],
+  "search": "Ramesh",
+  "isActive": true
+}

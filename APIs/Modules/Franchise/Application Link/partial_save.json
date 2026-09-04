@@ -1,0 +1,11 @@
+{
+  "vehicles": [
+    {
+      "vehicleType": "TATA ACE",
+      "registrationNo": "MH01AB1234",
+      "yearOfMfg": 2020,
+      "insuranceStatus": "VALID"
+    }
+  ],
+  "perPickupRate": 30.00
+}

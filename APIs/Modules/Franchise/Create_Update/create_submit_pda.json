@@ -1,0 +1,44 @@
+{
+  "onboardingType": "FRANCHISE",
+  "onboardingSubtype": "PDA",
+  "name": "Ravi Express PDA Partner",
+  "panNumber": "EFGHI5678J",
+  "effectiveDate": "2026-09-01",
+  "contactPerson": {
+    "firstName": "Ravi",
+    "lastName": "Yadav",
+    "email": "ravi.yadav@example.com",
+    "phone": "9876543214",
+    "designation": "Owner",
+    "isPrimary": true
+  },
+  "addresses": [
+    {
+      "addressType": "OPERATIONAL",
+      "addressLine1": "22 Depot Road",
+      "city": "Bangalore",
+      "state": "Karnataka",
+      "country": "India",
+      "postalCode": "560001",
+      "isPrimary": true
+    }
+  ],
+  "documentData": [
+    {
+      "documentType": "PAN",
+      "documentNumber": "EFGHI5678J",
+      "documentName": "PAN Card",
+      "documentUrl": "https://documents.example.com/pan/efghi5678j.pdf"
+    }
+  ],
+  "data": {
+    "vehicles": [
+      {
+        "vehicleType": "TATA ACE",
+        "registrationNo": "KA01XY9876",
+        "yearOfMfg": 2021,
+        "insuranceStatus": "VALID"
+      }
+    ]
+  }
+}

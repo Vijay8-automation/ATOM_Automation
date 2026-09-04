@@ -1,0 +1,14 @@
+[
+  {
+    "documentType": "PAN",
+    "documentNumber": "ABCDE1234F",
+    "documentName": "PAN Card",
+    "documentUrl": "https://documents.example.com/pan/abcde1234f.pdf"
+  },
+  {
+    "documentType": "CANCELLED_CHEQUE",
+    "documentNumber": "CHQ123456",
+    "documentName": "Cancelled Cheque",
+    "documentUrl": "https://documents.example.com/cheque/chq123456.pdf"
+  }
+]

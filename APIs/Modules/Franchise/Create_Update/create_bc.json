@@ -1,0 +1,26 @@
+{
+  "onboardingType": "FRANCHISE",
+  "onboardingSubtype": "BC",
+  "name": "Vikram Services BC Partner",
+  "panNumber": "DEFGH4567I",
+  "effectiveDate": "2026-09-01",
+  "contactPerson": {
+    "firstName": "Vikram",
+    "lastName": "Patel",
+    "email": "vikram.patel@example.com",
+    "phone": "9876543213",
+    "designation": "Proprietor",
+    "isPrimary": true
+  },
+  "addresses": [
+    {
+      "addressType": "OPERATIONAL",
+      "addressLine1": "789 Commerce Street",
+      "city": "Ahmedabad",
+      "state": "Gujarat",
+      "country": "India",
+      "postalCode": "380001",
+      "isPrimary": true
+    }
+  ]
+}

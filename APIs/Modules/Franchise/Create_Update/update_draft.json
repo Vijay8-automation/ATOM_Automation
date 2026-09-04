@@ -1,0 +1,42 @@
+{
+  "onboardingType": "FRANCHISE",
+  "onboardingSubtype": "PDA",
+  "name": "Ramesh Logistics PDA Partner (Updated)",
+  "panNumber": "ABCDE1234F",
+  "contactPerson": {
+    "contactId": "00000000-0000-0000-0000-000000000010",
+    "firstName": "Ramesh",
+    "lastName": "Kumar",
+    "email": "ramesh.updated@example.com",
+    "phone": "9876543210",
+    "isPrimary": true
+  },
+  "addresses": [
+    {
+      "addressId": "00000000-0000-0000-0000-000000000020",
+      "addressType": "OPERATIONAL",
+      "addressLine1": "123 Main Road Revised",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "postalCode": "400002",
+      "isPrimary": true
+    }
+  ],
+  "data": {
+    "vehicles": [
+      {
+        "vehicleType": "TATA ACE",
+        "registrationNo": "MH01AB1234",
+        "yearOfMfg": 2020,
+        "insuranceStatus": "VALID"
+      },
+      {
+        "vehicleType": "MAHINDRA BOLERO",
+        "registrationNo": "MH02BC5678",
+        "yearOfMfg": 2022,
+        "insuranceStatus": "VALID"
+      }
+    ]
+  }
+}

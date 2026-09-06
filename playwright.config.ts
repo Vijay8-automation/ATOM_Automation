@@ -63,7 +63,12 @@ export default defineConfig({
     {
       name: 'firefox',
       testDir: uiTestsDir,
-      use: { ...devices['Desktop Firefox'] },
+      use: {
+        ...devices['Desktop Firefox'],
+        launchOptions: {
+          args: ['-private'],
+        },
+      },
     },
     {
       name: 'webkit',

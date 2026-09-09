@@ -20,9 +20,9 @@ export const CommonPaths = {
   navigation: {
     leftPanel: 'aside, nav, .sidebar, .left-panel, div[class*="sidebar" i], div[class*="side-nav" i], div[class*="leftNav" i]',
     sidebarMenuContainer: 'ul[class*="menu" i], div[class*="menu" i], nav[class*="nav" i], aside',
-    onboardingMenu: "//span[contains(.,'Onboarding')] | //div[contains(.,'Onboarding')] | a:has-text('Onboarding')",
+    onboardingMenu: "//span[contains(.,'Onboarding')] | //div[contains(.,'Onboarding')] | //a[contains(.,'Onboarding')]",
     branchMenuItem: "//div[@class='flex items-center gap-6'][contains(.,'Branch')]",
-    branchMenuItemFallback: "//span[text()='Branch'] | //div[text()='Branch'] | a:has-text('Branch') | button:has-text('Branch')",
+    branchMenuItemFallback: "//span[text()='Branch'] | //div[text()='Branch'] | //a[contains(.,'Branch')] | //button[contains(.,'Branch')]",
     franchiseMenuItem: "//div[@class='flex items-center gap-6'][contains(.,'Franchise')] | //span[text()='Franchise'] | a:has-text('Franchise')",
   },
 

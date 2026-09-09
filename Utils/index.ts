@@ -4,6 +4,7 @@ export * from '../TestData/Excel_Reader/excelReader';
 export * from '../TestData/Excel_Reader/uiExcelReader';
 export * from './WaitHelper';
 export * from './ExceptionHandler';
+export * from './VariableManager';
 
 export interface TestCaseReportData {
   caseDetails: string;

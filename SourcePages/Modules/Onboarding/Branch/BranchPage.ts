@@ -1,5 +1,5 @@
 import { Page, expect } from '@playwright/test';
-import { BranchPaths } from '../../../../Utils/Modules/SourcePagePaths/BranchPaths';
+import { CommonPaths } from '../../../Common/CommonPaths';
 import { WaitHelper } from '../../../../Utils/WaitHelper';
 import { ExceptionHandler } from '../../../../Utils/ExceptionHandler';
 import { LoginPage } from '../../../Common/LoginPage';
@@ -29,7 +29,11 @@ export interface BranchData {
 
 export class BranchPage {
   readonly page: Page;
-  readonly paths = BranchPaths;
+  readonly paths = {
+    login: CommonPaths.login,
+    navigation: CommonPaths.navigation,
+    branch: CommonPaths.branchOnboarding,
+  };
   readonly wait: WaitHelper;
   readonly loginPage: LoginPage;
 

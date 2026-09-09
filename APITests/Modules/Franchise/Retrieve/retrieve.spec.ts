@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { RetrieveAPI } from '../../../../APIs/Modules/Franchise/Retrieve/RetrieveAPI';
 import { CreateUpdateAPI } from '../../../../APIs/Modules/Franchise/Create_Update/CreateUpdateAPI';
-import { LoginAPI } from '../../../../APIs/Modules/UserIAMService/auth/LoginAPI';
+import { ensureAuthToken } from '../../../../APIs/Modules/Franchise/franchiseBase';
+import { pm } from '../../../../Utils';
 import pdaPayload from '../../../../APIs/Modules/Franchise/Create_Update/create_pda.json';
 
 test.describe('Franchise - Retrieve API Tests', () => {
@@ -11,25 +12,28 @@ test.describe('Franchise - Retrieve API Tests', () => {
 
   test.beforeAll(async ({ playwright }) => {
     const reqContext = await playwright.request.newContext();
-    try {
-      const loginRes = await LoginAPI.login(reqContext);
-      authToken = loginRes.accessToken;
-    } catch (err: any) {
-      console.warn('[Auth] Login error:', err.message);
+    authToken = await ensureAuthToken(reqContext);
+
+    // Check if an entity ID is already available from previous test via Postman-like pm.environment
+    testEntityId = pm.environment.get('createdEntityId');
+    testPanNumber = pm.environment.get('createdPanNumber');
+
+    if (!testEntityId) {
+      // Fallback when running retrieve.spec.ts standalone
+      testPanNumber = 'ABCDE' + Math.floor(1000 + Math.random() * 9000) + 'F';
+      const createPayload = {
+        ...pdaPayload,
+        name: `Retrieve Test Entity ${Date.now()}`,
+        panNumber: testPanNumber,
+      };
+
+      const createRes = await CreateUpdateAPI.createDraft(reqContext, createPayload, 'franchise', authToken);
+      const body = await createRes.json();
+      testEntityId = body?.data?.entityId;
+      pm.environment.set('createdEntityId', testEntityId);
+      pm.environment.set('createdPanNumber', testPanNumber);
     }
-
-    // Create an entity first so we have guaranteed ID & PAN to retrieve
-    testPanNumber = 'ABCDE' + Math.floor(1000 + Math.random() * 9000) + 'F';
-    const createPayload = {
-      ...pdaPayload,
-      name: `Retrieve Test Entity ${Date.now()}`,
-      panNumber: testPanNumber,
-    };
-
-    const createRes = await CreateUpdateAPI.createDraft(reqContext, createPayload, 'franchise', authToken);
-    const body = await createRes.json();
-    testEntityId = body?.data?.entityId;
-    console.log(`[Setup] Created entity for retrieval: ID=${testEntityId}, PAN=${testPanNumber}`);
+    console.log(`[Setup] Target entity for retrieval: ID=${testEntityId}, PAN=${testPanNumber}`);
   });
 
   test('01 - Should retrieve Franchise Details by Entity ID', async ({ request }) => {

@@ -6,5 +6,6 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 TestData/authToken.json
+TestData/environment.json
 *.log
 .DS_Store

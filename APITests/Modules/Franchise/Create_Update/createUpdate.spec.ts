@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { CreateUpdateAPI } from '../../../../APIs/Modules/Franchise/Create_Update/CreateUpdateAPI';
-import { LoginAPI } from '../../../../APIs/Modules/UserIAMService/auth/LoginAPI';
+import { ensureAuthToken } from '../../../../APIs/Modules/Franchise/franchiseBase';
+import { pm } from '../../../../Utils';
 
 // Import payloads from APIs folder
 import pdaPayload from '../../../../APIs/Modules/Franchise/Create_Update/create_pda.json';
@@ -22,15 +23,9 @@ test.describe('Franchise - Create / Update API Tests', () => {
   let authToken: string;
 
   test.beforeAll(async ({ playwright }) => {
-    // Authenticate once via Master Login to get Bearer token
+    // Smart Auto-Login: Reuses active token or automatically logs in if missing
     const reqContext = await playwright.request.newContext();
-    try {
-      const loginRes = await LoginAPI.login(reqContext);
-      authToken = loginRes.accessToken;
-      console.log('[Auth] Logged in successfully before running Franchise tests.');
-    } catch (err: any) {
-      console.warn('[Auth] Login error, continuing with gateway headers:', err.message);
-    }
+    authToken = await ensureAuthToken(reqContext);
   });
 
   test('01 - Should create Franchise Draft PDA successfully', async ({ request }) => {
@@ -51,6 +46,10 @@ test.describe('Franchise - Create / Update API Tests', () => {
     expect(body.status).toBe('success');
     expect(body.data.entityId).toBeTruthy();
     expect(body.data.status).toBe('DRAFT');
+
+    // Postman-style variable storage:
+    pm.environment.set('createdEntityId', body.data.entityId);
+    pm.environment.set('createdPanNumber', payload.panNumber);
   });
 
   test('02 - Should create Franchise Draft RP successfully', async ({ request }) => {

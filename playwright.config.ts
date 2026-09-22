@@ -6,8 +6,10 @@ import path from 'path';
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // Determine report directory based on whether UI or API tests are running
-const isUITest = process.argv.some(arg => arg.toLowerCase().includes('tests') || arg.includes('chromium') || arg.includes('firefox') || arg.includes('webkit'));
+const isApiTest = process.argv.some(arg => arg.toLowerCase().includes('apitests') || arg.toLowerCase().includes('api'));
+const isUITest = !isApiTest && process.argv.some(arg => arg.toLowerCase().includes('tests') || arg.includes('chromium') || arg.includes('firefox') || arg.includes('webkit'));
 const htmlReportFolder = process.env.PLAYWRIGHT_HTML_REPORT || (isUITest ? 'playwright-report-ui' : 'playwright-report');
+
 
 // Cross-platform case-resilient test directory resolver (prevents Linux CI/CD case-sensitivity failures)
 const resolveTestDir = (preferredDir: string, fallbackDir: string): string => {

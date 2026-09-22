@@ -16,6 +16,7 @@
     "test:franchise:address": "npx playwright test \"APITests/Modules/Franchise/Address Management\" --project=api --reporter=list",
     "test:franchise:applink": "npx playwright test \"APITests/Modules/Franchise/Application Link\" --project=api --reporter=list",
     "test:franchise:verification": "npx playwright test \"APITests/Modules/Franchise/Verification_Supporting\" --project=api --reporter=list",
+    "test:network:route": "npx playwright test APITests/Modules/Network/MMRouteScenarios.spec.ts --project=api",
     "test:api": "npx playwright test --project=api",
     "test:ui": "npx playwright test --project=chromium",
     "test:ui:branch": "npx playwright test -g \"TC01\" --project=chromium",

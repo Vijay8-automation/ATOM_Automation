@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { APIRequestContext, request as playwrightRequest } from '@playwright/test';
-import { getBaseUrl } from '../../TestData/Excel_Reader/excelReader';
+import { getBaseUrl, getServiceBaseUrl } from '../../TestData/Excel_Reader/excelReader';
 import { LoginAPI } from '../Modules/UserIAMService/auth/LoginAPI';
 import { pm } from '../../Utils/VariableManager';
 
@@ -123,9 +123,12 @@ export class BaseAPI {
   ): Record<string, string> {
     const activeToken = token || this.getSavedAuthToken();
 
+    const userId = pm.environment.get('actor') || '00000000-0000-0000-0000-000000000001';
+    const companyId = pm.environment.get('companyId') || '00000000-0000-0000-0000-000000000002';
+
     const headers: Record<string, string> = {
-      'x-user-id': '00000000-0000-0000-0000-000000000001',
-      'x-company-id': '00000000-0000-0000-0000-000000000002',
+      'x-user-id': String(userId),
+      'x-company-id': String(companyId),
       'Content-Type': 'application/json',
       ...(overrides || {}),
     };
@@ -143,6 +146,14 @@ export class BaseAPI {
   public static getApiBaseUrl(sheetName: string = 'Environment'): string {
     return getBaseUrl(sheetName);
   }
+
+  /**
+   * Resolves microservice-specific base URL from TestData.xlsx (Sheet: URL's).
+   * E.g. 'booking', 'lmfm', 'mm', 'network', 'notification', 'driverapp', 'scanning'
+   */
+  public static getServiceUrl(serviceKey: string, defaultUrl?: string): string {
+    return getServiceBaseUrl(serviceKey, defaultUrl);
+  }
 }
 
 // =========================================================================
@@ -153,3 +164,4 @@ export const ensureAuthToken = (req?: APIRequestContext, force?: boolean) => Bas
 export const getDefaultGatewayHeaders = (token?: string, overrides?: Record<string, string>) =>
   BaseAPI.getDefaultGatewayHeaders(token, overrides);
 export const getApiBaseUrl = (sheetName?: string) => BaseAPI.getApiBaseUrl(sheetName);
+export const getServiceUrl = (serviceKey: string, defaultUrl?: string) => BaseAPI.getServiceUrl(serviceKey, defaultUrl);

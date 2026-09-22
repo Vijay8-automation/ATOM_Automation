@@ -168,9 +168,9 @@ export function getUICredentials(preferredSheet: string = 'Credential', rowIndex
 }
 
 /**
- * Reads UI base URL or returns default https://dev.omone.in
+ * Reads UI base URL or returns default https://uat.omone.in
  */
-export function getUIBaseUrl(defaultUrl: string = 'https://dev.omone.in'): string {
+export function getUIBaseUrl(defaultUrl: string = 'https://uat.omone.in'): string {
   const workbook = getUIWorkbook();
   if (workbook && workbook.SheetNames.length > 0) {
     const xlsx = require('xlsx');
@@ -190,4 +190,44 @@ export function getUIBaseUrl(defaultUrl: string = 'https://dev.omone.in'): strin
     }
   }
   return defaultUrl.replace(/\/+$/, '');
+}
+
+/**
+ * Reads Invalid Checksum GSTIN from BranchCreation sheet.
+ */
+export function getInvalidChecksumGstin(sheetName: string = 'BranchCreation'): string {
+  const row = getBranchCreationRow(sheetName, 0);
+  return getFieldValue(row, ['Invalid checksum GSTIN', 'InvalidChecksumGSTIN', 'Invalid GSTIN'], '27ABCDE1234F1Z5');
+}
+
+/**
+ * Reads GSTIN less than 15 characters from BranchCreation sheet.
+ */
+export function getGstinLessThan15(sheetName: string = 'BranchCreation'): string {
+  const row = getBranchCreationRow(sheetName, 0);
+  return getFieldValue(row, ['GSTIN less than 15 characters', 'GstinLessThan15', 'LessThan15'], '27ABCDE1234F1Z');
+}
+
+/**
+ * Reads GSTIN more than 15 characters from BranchCreation sheet.
+ */
+export function getGstinMoreThan15(sheetName: string = 'BranchCreation'): string {
+  const row = getBranchCreationRow(sheetName, 0);
+  return getFieldValue(row, ['GSTIN more than 15 characters', 'GstinMoreThan15', 'MoreThan15'], '27ABCDE1234F1Z55');
+}
+
+/**
+ * Reads Suspended GSTIN from BranchCreation sheet.
+ */
+export function getSuspendedGstin(sheetName: string = 'BranchCreation'): string {
+  const row = getBranchCreationRow(sheetName, 0);
+  return getFieldValue(row, ['Suspended GSTIN', 'SuspendedGSTIN', 'Suspended'], '07AAKCA7229G1ZL');
+}
+
+/**
+ * Reads Cancelled GSTIN from BranchCreation sheet.
+ */
+export function getCancelledGstin(sheetName: string = 'BranchCreation'): string {
+  const row = getBranchCreationRow(sheetName, 0);
+  return getFieldValue(row, ['Cancelled GSTIN', 'CancelledGSTIN', 'Cancelled'], '02AAGFA5896G1ZG');
 }

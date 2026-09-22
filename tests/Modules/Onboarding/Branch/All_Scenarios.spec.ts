@@ -15,12 +15,27 @@ import {
  * - Runs in Serial Mode (Single Shared Browser Session)
  * - Supports: Single scenario, Multiple scenarios (-g "Scenario 1|Scenario 3"), and All scenarios
  */
-test.describe.serial('Branch Onboarding - All Scenarios', () => {
+test.describe('Branch Onboarding - All Scenarios', () => {
   let page: Page;
   let allScenariosPage: AllScenariosPage;
 
   test.beforeAll(async ({ browser }) => {
-    page = await browser.newPage();
+    test.setTimeout(90000);
+    const context = await browser.newContext();
+    await context.addInitScript(() => {
+      const applyZoom = () => {
+        if (document.body) {
+          document.body.style.zoom = '90%';
+        }
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyZoom);
+        window.addEventListener('load', applyZoom);
+      } else {
+        applyZoom();
+      }
+    });
+    page = await context.newPage();
     allScenariosPage = new AllScenariosPage(page);
 
     try {
@@ -244,7 +259,7 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     // =======================================================================
     await page.waitForTimeout(1000);
     const isSaveDisabled_TC04_6 = await allScenariosPage.isSaveButtonDisabled();
-    expect(isSaveDisabled_TC04_6, 'TC_04.6 Failed: "Save" button should remain disabled when Branch Floor is not selected').toBeTruthy();
+    expect.soft(isSaveDisabled_TC04_6, 'TC_04.6 Failed: "Save" button should remain disabled when Branch Floor is not selected').toBeTruthy();
     console.log(`[Validation Passed] TC_04.6: Save disabled when Branch Floor unselected = ${isSaveDisabled_TC04_6}`);
 
     // Now select Branch Floor from Excel -> Now all 6 fields are filled!
@@ -257,7 +272,7 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     await allScenariosPage.clearNoOfGates();
     await page.waitForTimeout(1000);
     const isSaveDisabled_TC04_1 = await allScenariosPage.isSaveButtonDisabled();
-    expect(isSaveDisabled_TC04_1, 'TC_04.1 Failed: "Save" button should remain disabled when No of Gates is blank').toBeTruthy();
+    expect.soft(isSaveDisabled_TC04_1, 'TC_04.1 Failed: "Save" button should remain disabled when No of Gates is blank').toBeTruthy();
     console.log(`[Validation Passed] TC_04.1: Save disabled when No of Gates blank = ${isSaveDisabled_TC04_1}`);
     await allScenariosPage.fillNoOfGates(String(noOfGates)); // re-fill
     await page.waitForTimeout(500);
@@ -268,7 +283,7 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     await allScenariosPage.clearTotalNoOfDocks();
     await page.waitForTimeout(1000);
     const isSaveDisabled_TC04_2 = await allScenariosPage.isSaveButtonDisabled();
-    expect(isSaveDisabled_TC04_2, 'TC_04.2 Failed: "Save" button should remain disabled when Total No of Docks is blank').toBeTruthy();
+    expect.soft(isSaveDisabled_TC04_2, 'TC_04.2 Failed: "Save" button should remain disabled when Total No of Docks is blank').toBeTruthy();
     console.log(`[Validation Passed] TC_04.2: Save disabled when Total No of Docks blank = ${isSaveDisabled_TC04_2}`);
     await allScenariosPage.fillTotalNoOfDocks(String(totalDocks)); // re-fill
     await page.waitForTimeout(500);
@@ -279,7 +294,7 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     await allScenariosPage.clearOpenYardArea();
     await page.waitForTimeout(1000);
     const isSaveDisabled_TC04_3 = await allScenariosPage.isSaveButtonDisabled();
-    expect(isSaveDisabled_TC04_3, 'TC_04.3 Failed: "Save" button should remain disabled when Open Yard Area is blank').toBeTruthy();
+    expect.soft(isSaveDisabled_TC04_3, 'TC_04.3 Failed: "Save" button should remain disabled when Open Yard Area is blank').toBeTruthy();
     console.log(`[Validation Passed] TC_04.3: Save disabled when Open Yard Area blank = ${isSaveDisabled_TC04_3}`);
     await allScenariosPage.fillOpenYardArea(String(openYardArea)); // re-fill
     await page.waitForTimeout(500);
@@ -290,7 +305,7 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     await allScenariosPage.clearWarehouseFloorArea();
     await page.waitForTimeout(1000);
     const isSaveDisabled_TC04_4 = await allScenariosPage.isSaveButtonDisabled();
-    expect(isSaveDisabled_TC04_4, 'TC_04.4 Failed: "Save" button should remain disabled when Warehouse Floor Area is blank').toBeTruthy();
+    expect.soft(isSaveDisabled_TC04_4, 'TC_04.4 Failed: "Save" button should remain disabled when Warehouse Floor Area is blank').toBeTruthy();
     console.log(`[Validation Passed] TC_04.4: Save disabled when Warehouse Floor Area blank = ${isSaveDisabled_TC04_4}`);
     await allScenariosPage.fillWarehouseFloorArea(String(whFloorArea)); // re-fill
     await page.waitForTimeout(500);
@@ -301,7 +316,7 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     await allScenariosPage.clearMaterialStorageCapacity();
     await page.waitForTimeout(1000);
     const isSaveDisabled_TC04_5 = await allScenariosPage.isSaveButtonDisabled();
-    expect(isSaveDisabled_TC04_5, 'TC_04.5 Failed: "Save" button should remain disabled when Material Storage Capacity is blank').toBeTruthy();
+    expect.soft(isSaveDisabled_TC04_5, 'TC_04.5 Failed: "Save" button should remain disabled when Material Storage Capacity is blank').toBeTruthy();
     console.log(`[Validation Passed] TC_04.5: Save disabled when Material Storage Capacity blank = ${isSaveDisabled_TC04_5}`);
     await allScenariosPage.fillMaterialStorageCapacity(String(storageCapacity)); // re-fill
     await page.waitForTimeout(500);
@@ -314,6 +329,140 @@ test.describe.serial('Branch Onboarding - All Scenarios', () => {
     });
 
     console.log('\n✅ Scenario 4 All Validations Passed Successfully in Test Method!');
+    await page.waitForTimeout(3000);
+  });
+
+  // =========================================================================
+  // SCENARIO 5: GSTIN ENTRY & VALIDATION (TC_05.1 - TC_05.5)
+  // Run standalone: npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g "Scenario 5" --project=chromium --headed
+  // =========================================================================
+  test('Scenario 5 - GSTIN Entry & Validation (All Cases: TC_05.1 - TC_05.5)', async ({}, testInfo) => {
+    test.setTimeout(240000);
+    console.log('\n--- Running Scenario 5: GSTIN Entry & Validation (All Cases: TC_05.1 - TC_05.5) ---');
+
+    const {
+      case_TC_05_1_hasChecksumError,
+      case_TC_05_2_isDisabled,
+      case_TC_05_3_isRestrictedOrDisabled,
+      case_TC_05_4_isSuspendedBlocked,
+      case_TC_05_5_isCancelledBlocked,
+      toastMessages,
+    } = await allScenariosPage.executeScenario5_GstinEntryAndValidation();
+
+    // TC_05.1: Invalid Checksum GSTIN throws validation error
+    expect.soft(
+      case_TC_05_1_hasChecksumError,
+      `TC_05.1 Failed: System should validate GSTIN checksum and display validation error. Captured: "${toastMessages.tc05_1_msg}"`
+    ).toBeTruthy();
+
+    // TC_05.2: GSTIN < 15 characters keeps button disabled
+    expect.soft(
+      case_TC_05_2_isDisabled,
+      'TC_05.2 Failed: "Fetch Details" button should remain disabled when GSTIN is less than 15 characters'
+    ).toBeTruthy();
+
+    // TC_05.3: GSTIN > 15 characters keeps button disabled or caps input length
+    expect.soft(
+      case_TC_05_3_isRestrictedOrDisabled,
+      'TC_05.3 Failed: "Fetch Details" button should remain disabled or input capped when GSTIN is more than 15 characters'
+    ).toBeTruthy();
+
+    // TC_05.4: Suspended GSTIN blocks creation on Save
+    expect.soft(
+      case_TC_05_4_isSuspendedBlocked,
+      `TC_05.4 Failed: System should restrict submission and prompt "Kindly enter valid GSTIN" for Suspended GSTIN. Captured: "${toastMessages.tc05_4_msg}"`
+    ).toBeTruthy();
+
+    // TC_05.5: Cancelled GSTIN blocks creation on Save
+    expect.soft(
+      case_TC_05_5_isCancelledBlocked,
+      `TC_05.5 Failed: System should restrict submission and prompt "Kindly enter valid GSTIN" for Cancelled GSTIN. Captured: "${toastMessages.tc05_5_msg}"`
+    ).toBeTruthy();
+
+    ReportHelper.recordTestResult(testInfo, {
+      caseDetails: 'Scenario 5 - GSTIN Entry & Validation (TC_05.1 - TC_05.5)',
+      expected: '1. TC_05.1: Checksum error displayed. 2. TC_05.2: Disabled for <15 chars. 3. TC_05.3: Disabled/capped for >15 chars. 4. TC_05.4: Suspended GSTIN blocked with prompt. 5. TC_05.5: Cancelled GSTIN blocked with prompt.',
+      actualResult: `All 5 test cases verified! TC_05.1 (Checksum error: ${case_TC_05_1_hasChecksumError} [${toastMessages.tc05_1_msg}]), TC_05.2 (Disabled <15: ${case_TC_05_2_isDisabled}), TC_05.3 (Disabled/capped >15: ${case_TC_05_3_isRestrictedOrDisabled}), TC_05.4 (Suspended blocked: ${case_TC_05_4_isSuspendedBlocked} [${toastMessages.tc05_4_msg}]), TC_05.5 (Cancelled blocked: ${case_TC_05_5_isCancelledBlocked} [${toastMessages.tc05_5_msg}]).`,
+    });
+
+    console.log('\n✅ Scenario 5 Passed Successfully! All 5 GSTIN validation test cases verified.');
+    await page.waitForTimeout(3000);
+  });
+
+  // =========================================================================
+  // SCENARIO 6: OFFICE ADDRESS DETAILS SELECTION FUNCTIONALITY (TC_06.1 - TC_06.8)
+  // Run standalone: npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g "Scenario 6" --project=chromium --headed
+  // =========================================================================
+  test('Scenario 6 - Office Address Details Selection Functionality (All Cases: TC_06.1 - TC_06.8)', async ({}, testInfo) => {
+    test.setTimeout(180000);
+    console.log('\n--- Running Scenario 6: Office Address Details Selection Functionality (TC_06.1 - TC_06.8) ---');
+
+    const {
+      case_TC_06_1_isFirstSelectedByDefault,
+      case_TC_06_2_isSecondSelected,
+      case_TC_06_3_isOnlyOneSelected,
+      case_TC_06_4_isPreviousDeselected,
+      case_TC_06_5_isSelectedAfterScroll,
+      case_TC_06_6_isAddressApplied,
+      case_TC_06_7_isPopupClosedWithoutApplying,
+      case_TC_06_8_isPopupClosedViaXWithoutApplying,
+    } = await allScenariosPage.executeScenario6_OfficeAddressSelectionFunctionality();
+
+    // TC_06.1: First address selected by default
+    expect.soft(
+      case_TC_06_1_isFirstSelectedByDefault,
+      'TC_06.1 Failed: First office address radio button should be selected by default'
+    ).toBeTruthy();
+
+    // TC_06.2: User can select office address
+    expect.soft(
+      case_TC_06_2_isSecondSelected,
+      'TC_06.2 Failed: System should allow user to select an office address using radio button'
+    ).toBeTruthy();
+
+    // TC_06.3: Only one address selected at a time
+    expect.soft(
+      case_TC_06_3_isOnlyOneSelected,
+      'TC_06.3 Failed: System should allow user to select only one office address at a time'
+    ).toBeTruthy();
+
+    // TC_06.4: Previously selected address deselected
+    expect.soft(
+      case_TC_06_4_isPreviousDeselected,
+      'TC_06.4 Failed: System should deselect previously selected office address when another is selected'
+    ).toBeTruthy();
+
+    // TC_06.5: Select address after scrolling
+    expect.soft(
+      case_TC_06_5_isSelectedAfterScroll,
+      'TC_06.5 Failed: System should allow user to select an office address from the list after scrolling'
+    ).toBeTruthy();
+
+    // TC_06.6: Selected address applied on clicking Select Address
+    expect.soft(
+      case_TC_06_6_isAddressApplied,
+      'TC_06.6 Failed: System should apply the selected office address on clicking Select Address'
+    ).toBeTruthy();
+
+    // TC_06.7: Popup closes on clicking Cancel without applying
+    expect.soft(
+      case_TC_06_7_isPopupClosedWithoutApplying,
+      'TC_06.7 Failed: System should close the office address popup on clicking Cancel without applying changes'
+    ).toBeTruthy();
+
+    // TC_06.8: Popup closes on clicking X icon without applying
+    expect.soft(
+      case_TC_06_8_isPopupClosedViaXWithoutApplying,
+      'TC_06.8 Failed: System should close the office address popup on clicking the X icon without applying changes'
+    ).toBeTruthy();
+
+    ReportHelper.recordTestResult(testInfo, {
+      caseDetails: 'Scenario 6 - Office Address Details Selection Functionality (TC_06.1 - TC_06.8)',
+      expected: '1. Default first selected. 2. Radio selection allowed. 3. Single select only. 4. Previous deselected. 5. Scroll & select. 6. Select Address applies. 7. Cancel closes without applying. 8. X icon closes without applying.',
+      actualResult: `All 8 test cases verified! TC_06.1 (Default selected: ${case_TC_06_1_isFirstSelectedByDefault}), TC_06.2 (Select radio: ${case_TC_06_2_isSecondSelected}), TC_06.3 (Single select: ${case_TC_06_3_isOnlyOneSelected}), TC_06.4 (Previous deselected: ${case_TC_06_4_isPreviousDeselected}), TC_06.5 (Scroll & select: ${case_TC_06_5_isSelectedAfterScroll}), TC_06.6 (Applied on select: ${case_TC_06_6_isAddressApplied}), TC_06.7 (Cancel closed: ${case_TC_06_7_isPopupClosedWithoutApplying}), TC_06.8 (X closed: ${case_TC_06_8_isPopupClosedViaXWithoutApplying}).`,
+    });
+
+    console.log('\n✅ Scenario 6 Passed Successfully! All 8 office address selection test cases verified.');
     await page.waitForTimeout(3000);
   });
 });

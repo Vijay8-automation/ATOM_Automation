@@ -9,3 +9,4 @@ TestData/authToken.json
 TestData/environment.json
 *.log
 .DS_Store
+scratch/

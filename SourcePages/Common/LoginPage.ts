@@ -17,6 +17,11 @@ export class LoginPage {
   readonly paths = CommonPaths.login;
   readonly wait: WaitHelper;
 
+  // =========================================================================
+  // UI BASE URL: Change your UI environment URL directly here!
+  // =========================================================================
+  public baseUrl: string = 'https://uat.omone.in';
+
   constructor(page: Page) {
     this.page = page;
     this.wait = new WaitHelper(page);
@@ -24,10 +29,10 @@ export class LoginPage {
 
   /**
    * Navigates to the Application Login page.
-   * Auto-detects Base URL from Excel or defaults to https://dev.omone.in/login.
+   * Uses this.baseUrl by default, or customUrl if explicitly passed.
    */
   public async gotoLoginPage(customUrl?: string): Promise<void> {
-    const baseUrl = customUrl || getUIBaseUrl() || 'https://dev.omone.in';
+    const baseUrl = customUrl || this.baseUrl;
     const targetUrl = baseUrl.endsWith('/login') ? baseUrl : `${baseUrl}/login`;
 
     console.log(`[LoginPage] Navigating to Login URL: ${targetUrl}`);
@@ -55,6 +60,28 @@ export class LoginPage {
     }
 
     await this.page.goto(targetUrl, { waitUntil: 'load', timeout: 45000 });
+
+    // Set 90% zoom level across all pages and navigations
+    try {
+      await this.page.context().addInitScript(() => {
+        const applyZoom = () => {
+          if (document.body) {
+            document.body.style.zoom = '90%';
+          }
+        };
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', applyZoom);
+          window.addEventListener('load', applyZoom);
+        } else {
+          applyZoom();
+        }
+      });
+    } catch {}
+
+    // Apply 90% zoom directly on current page
+    await this.page.evaluate(() => {
+      if (document.body) document.body.style.zoom = '90%';
+    }).catch(() => {});
 
     // Ensure full page load & all network/resources settled
     console.log('[LoginPage] ⏳ Waiting for Login page resources and DOM to settle completely...');

@@ -6,6 +6,11 @@ import {
   readUISheet,
   getBranchCreationRow,
   getFieldValue,
+  getInvalidChecksumGstin,
+  getGstinLessThan15,
+  getGstinMoreThan15,
+  getSuspendedGstin,
+  getCancelledGstin,
 } from '../../../../TestData/Excel_Reader/uiExcelReader';
 
 /**
@@ -19,6 +24,8 @@ import {
  * - Scenario 2: Validate "Fetch Details" Button Functionality
  * - Scenario 3: Validate "Next" Button Disabled When Mandatory Fields Are Blank (TC_03.1 - TC_03.7)
  * - Scenario 4: Validate "Save" Button Disabled on Infra Info Page (TC_04.1 - TC_04.6)
+ * - Scenario 5: GSTIN Entry & Validation (TC_05.1 - TC_05.5)
+ * - Scenario 6: Office Address Details Selection Functionality (TC_06.1 - TC_06.8)
  */
 export class AllScenariosPage {
   readonly page: Page;
@@ -45,6 +52,8 @@ export class AllScenariosPage {
     console.log('[AllScenariosPage] Navigating to Login page and logging in...');
     await this.loginPage.gotoLoginPage();
     await this.loginPage.login();
+    await this.loginPage.isLoggedIn().catch(() => {});
+    await this.page.waitForURL(url => !url.pathname.includes('/login') || url.pathname.includes('dashboard'), { timeout: 15000 }).catch(() => {});
 
     // Ensure session is active and app shell/sidebar is ready
     console.log('[AllScenariosPage] Waiting for post-login dashboard / sidebar to settle...');
@@ -102,18 +111,23 @@ export class AllScenariosPage {
 
     if (!isBranchVisible) {
       const onboardingMenu = this.page.locator(this.paths.navigation.onboardingMenu).first();
-      // Wait actively for onboarding menu to appear in sidebar (up to 15s)
-      await onboardingMenu.waitFor({ state: 'visible', timeout: 15000 });
-      console.log('[AllScenariosPage] Expanding parent "Onboarding" menu...');
-      await onboardingMenu.click({ timeout: 5000 }).catch(() => {});
-      await this.wait.pause(1500);
+      if (await onboardingMenu.isVisible({ timeout: 4000 }).catch(() => false)) {
+        console.log('[AllScenariosPage] Expanding parent "Onboarding" menu...');
+        await onboardingMenu.click({ timeout: 3000 }).catch(() => {});
+        await this.wait.pause(1000);
+      } else {
+        console.log('[AllScenariosPage] Direct navigating to /branch/dashboard fallback...');
+        await this.page.goto(`${this.loginPage.baseUrl}/branch/dashboard`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        await this.wait.pause(1500);
+      }
     }
 
-    if (await primaryBranch.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (await primaryBranch.isVisible({ timeout: 3000 }).catch(() => false)) {
       await primaryBranch.click();
-    } else {
-      await fallbackBranch.waitFor({ state: 'visible', timeout: 10000 });
+    } else if (await fallbackBranch.isVisible({ timeout: 3000 }).catch(() => false)) {
       await fallbackBranch.click();
+    } else if (!(this.page.url().toLowerCase().includes('branch'))) {
+      await this.page.goto(`${this.loginPage.baseUrl}/branch/dashboard`, { waitUntil: 'domcontentloaded' }).catch(() => {});
     }
 
     await this.page.waitForLoadState('domcontentloaded');
@@ -341,25 +355,19 @@ export class AllScenariosPage {
    * Verifies if the "Office Address Details" popup is displayed.
    */
   public async isOfficeAddressPopupDisplayed(timeout: number = 25000): Promise<boolean> {
-    console.log(`[AllScenariosPage] Waiting up to ${timeout / 1000}s for "Office Address Details" popup / "Select Address" button...`);
-    const selectBtn = this.page.locator(this.paths.branchOnboarding.selectAddressButton).first();
+    console.log(`[AllScenariosPage] Waiting up to ${timeout / 1000}s for "Office Address Details" popup...`);
     const popup = this.page.locator(this.paths.branchOnboarding.officeAddressPopup).first();
+    const selectBtn = this.page.locator(this.paths.branchOnboarding.selectAddressButton).first();
 
     try {
-      await selectBtn.waitFor({ state: 'visible', timeout });
-      console.log('[AllScenariosPage] ✅ "Select Address" button appeared in Office Address popup!');
+      await popup.waitFor({ state: 'visible', timeout });
+      console.log('[AllScenariosPage] ✅ Office Address Details popup container is visible!');
+      await this.wait.pause(1000);
       return true;
     } catch {
-      console.log('[AllScenariosPage] Primary button wait elapsed, checking popup container fallback...');
-      try {
-        await popup.waitFor({ state: 'visible', timeout: 5000 });
-        console.log('[AllScenariosPage] ✅ Office Address Details popup container is visible!');
-        return true;
-      } catch {
-        const isSelectBtnVisible = await selectBtn.isVisible().catch(() => false);
-        const isPopupVisible = await popup.isVisible().catch(() => false);
-        return isSelectBtnVisible || isPopupVisible;
-      }
+      const isSelectVisible = await selectBtn.isVisible().catch(() => false);
+      const isPopupVisible = await popup.isVisible().catch(() => false);
+      return isSelectVisible || isPopupVisible;
     }
   }
 
@@ -373,31 +381,48 @@ export class AllScenariosPage {
   public async selectAddressAndSaveGeofence(): Promise<void> {
     console.log('[AllScenariosPage] Handling Address Selection & Geofence Save...');
 
-    // 1. Click "Select Address" on Office Address Details popup
+    // 1. Wait for "Select Address" button on Office Address Details popup (if multiple addresses popup appears)
     const selectBtn = this.page.locator(this.paths.branchOnboarding.selectAddressButton).first();
-    await selectBtn.waitFor({ state: 'visible', timeout: 20000 });
-    await this.wait.pause(1000);
-    await selectBtn.click();
-    console.log('[AllScenariosPage] ✅ Clicked "Select Address" button.');
-    await this.wait.pause(1500);
-
-    // 2. Wait for Set Geofence Location modal and click "Save"
     const geofenceModal = this.page.locator(
       "//div[contains(.,'Set Geofence Location') and (contains(@class,'fixed') or @role='dialog')]"
     ).first();
-    await geofenceModal.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+
+    console.log('[AllScenariosPage] Awaiting Office Address Details popup or Geofence modal...');
+    try {
+      await Promise.race([
+        selectBtn.waitFor({ state: 'visible', timeout: 20000 }),
+        geofenceModal.waitFor({ state: 'visible', timeout: 20000 }),
+      ]);
+    } catch {
+      console.log('[AllScenariosPage] Neither Office Address popup nor Geofence modal appeared within 20s.');
+    }
+
+    if (await selectBtn.isVisible().catch(() => false)) {
+      console.log('[AllScenariosPage] Office Address Details popup detected. Clicking "Select Address"...');
+      await this.wait.pause(1000);
+      await selectBtn.click();
+      console.log('[AllScenariosPage] ✅ Clicked "Select Address" button.');
+      await this.wait.pause(1500);
+    }
+
+    // 2. Wait for Set Geofence Location modal and click "Save"
+    console.log('[AllScenariosPage] Awaiting Set Geofence Location modal...');
+    try {
+      await geofenceModal.waitFor({ state: 'visible', timeout: 15000 });
+    } catch {}
 
     const geofenceSaveBtn = this.page.locator(
       "//div[contains(.,'Set Geofence Location')]//button[normalize-space()='Save'] | //div[contains(@class,'fixed')]//button[normalize-space()='Save'] | //button[normalize-space()='Save']"
     ).first();
 
-    if (await geofenceSaveBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
+    try {
+      await geofenceSaveBtn.waitFor({ state: 'visible', timeout: 10000 });
       await this.wait.pause(1000);
       await geofenceSaveBtn.click();
       console.log('[AllScenariosPage] ✅ Clicked "Save" button on Geofence popup.');
-    } else {
+    } catch {
       const fallbackSave = this.page.locator(this.paths.branchOnboarding.saveButton).first();
-      if (await fallbackSave.isVisible({ timeout: 4000 }).catch(() => false)) {
+      if (await fallbackSave.isVisible().catch(() => false)) {
         await fallbackSave.click();
         console.log('[AllScenariosPage] Clicked fallback Save button.');
       }
@@ -1027,6 +1052,542 @@ export class AllScenariosPage {
       classes.includes('opacity-50') ||
       classes.includes('bg-gray')
     );
+  }
+
+  // =========================================================================
+  // SCENARIO 5 & 6 HELPERS: OFFICE ADDRESS POPUP & GST VALIDATION
+  // =========================================================================
+
+  /**
+   * Selects an office address radio button by index (0-based).
+   */
+  public async selectOfficeAddressRadio(index: number): Promise<void> {
+    const radioInputs = this.page.locator(this.paths.branchOnboarding.officeAddressRadioList);
+    const radioWrappers = this.page.locator(this.paths.branchOnboarding.officeAddressMuiRadioList);
+    const count = await radioInputs.count();
+    if (index >= count) {
+      console.warn(`[AllScenariosPage] Radio index ${index} out of range (count: ${count})`);
+      return;
+    }
+    const targetWrapper = radioWrappers.nth(index);
+    if (await targetWrapper.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await targetWrapper.click();
+    } else {
+      await radioInputs.nth(index).click({ force: true });
+    }
+    await this.wait.pause(500);
+  }
+
+  /**
+   * Checks if an office address radio button is checked (by index, 0-based).
+   */
+  public async isOfficeAddressRadioChecked(index: number): Promise<boolean> {
+    const radioInputs = this.page.locator(this.paths.branchOnboarding.officeAddressRadioList);
+    const radioWrappers = this.page.locator(this.paths.branchOnboarding.officeAddressMuiRadioList);
+    const count = await radioInputs.count();
+    if (index >= count) return false;
+
+    // Direct input checked state
+    const isCheckedInput = await radioInputs.nth(index).isChecked().catch(() => false);
+    if (isCheckedInput) return true;
+
+    // MUI checked class
+    const wrapperClass = (await radioWrappers.nth(index).getAttribute('class').catch(() => '')) || '';
+    if (wrapperClass.includes('Mui-checked')) return true;
+
+    // aria-checked attribute
+    const ariaChecked = await radioInputs.nth(index).getAttribute('aria-checked').catch(() => null);
+    if (ariaChecked === 'true') return true;
+
+    return false;
+  }
+
+  /**
+   * Returns the count of checked radio buttons in the Office Address Details popup.
+   */
+  public async getCheckedOfficeAddressRadiosCount(): Promise<number> {
+    const radioInputs = this.page.locator(this.paths.branchOnboarding.officeAddressRadioList);
+    const count = await radioInputs.count();
+    let checkedCount = 0;
+    for (let i = 0; i < count; i++) {
+      if (await this.isOfficeAddressRadioChecked(i)) {
+        checkedCount++;
+      }
+    }
+    return checkedCount;
+  }
+
+  /**
+   * Scrolls the office address list to reveal more addresses down the list.
+   */
+  public async scrollOfficeAddressList(targetIndex: number = 4): Promise<void> {
+    console.log(`[AllScenariosPage] Scrolling office address list to item #${targetIndex}...`);
+    const container = this.page.locator(this.paths.branchOnboarding.officeAddressScrollContainer).first();
+    if (await container.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await container.evaluate((el: HTMLElement) => {
+        el.scrollTop = el.scrollHeight;
+      }).catch(() => {});
+      await this.wait.pause(500);
+    }
+
+    const rows = this.page.locator(this.paths.branchOnboarding.officeAddressItemRows);
+    const targetRow = rows.nth(targetIndex);
+    if (await targetRow.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await targetRow.scrollIntoViewIfNeeded().catch(() => {});
+    } else {
+      const radioInputs = this.page.locator(this.paths.branchOnboarding.officeAddressRadioList);
+      if (await radioInputs.nth(targetIndex).isVisible({ timeout: 2000 }).catch(() => false)) {
+        await radioInputs.nth(targetIndex).scrollIntoViewIfNeeded().catch(() => {});
+      }
+    }
+    await this.wait.pause(500);
+  }
+
+  /**
+   * Clicks "Select Address" button in Office Address Details popup.
+   */
+  public async clickSelectAddressInPopup(): Promise<void> {
+    console.log('[AllScenariosPage] Clicking "Select Address" in Office Address popup...');
+    const selectBtn = this.page.locator(this.paths.branchOnboarding.selectAddressButton).first();
+    await selectBtn.waitFor({ state: 'visible', timeout: 10000 });
+    await selectBtn.click();
+    await this.wait.pause(1000);
+  }
+
+  /**
+   * Clicks "Cancel" button in Office Address Details popup.
+   */
+  public async clickCancelInOfficeAddressPopup(): Promise<void> {
+    console.log('[AllScenariosPage] Clicking "Cancel" button in Office Address Details popup...');
+    const cancelBtn = this.page.locator(this.paths.branchOnboarding.cancelAddressPopupButton).first();
+    await cancelBtn.waitFor({ state: 'visible', timeout: 5000 });
+    await cancelBtn.click();
+    await this.wait.pause(1000);
+  }
+
+  /**
+   * Clicks "X" (Close) icon in Office Address Details popup.
+   */
+  public async clickCloseXInOfficeAddressPopup(): Promise<void> {
+    console.log('[AllScenariosPage] Clicking "X" (Close) icon in Office Address Details popup...');
+    const closeBtn = this.page.locator(this.paths.branchOnboarding.officeAddressCloseIcon).first();
+    if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await closeBtn.click();
+    } else {
+      const fallbackClose = this.page.locator(
+        "//div[contains(.,'Office Address Details')]//button[contains(@class,'close') or @aria-label='Close' or @aria-label='close' or .//*[name()='svg']] | //div[contains(.,'Office Address Details')]//*[name()='svg']"
+      ).first();
+      if (await fallbackClose.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await fallbackClose.click();
+      } else {
+        await this.page.keyboard.press('Escape');
+      }
+    }
+    await this.wait.pause(1000);
+  }
+
+  /**
+   * Checks if the Office Address Details popup is visible.
+   */
+  public async isOfficeAddressPopupVisible(): Promise<boolean> {
+    const popup = this.page.locator(this.paths.branchOnboarding.officeAddressPopup).first();
+    return await popup.isVisible({ timeout: 2000 }).catch(() => false);
+  }
+
+  /**
+   * Helper to verify if an address has been applied to the Branch form.
+   */
+  public async isBranchAddressApplied(): Promise<boolean> {
+    const addressInput = this.page.locator(
+      "//label[contains(.,'Address')]/following::input[1] | //input[@aria-label='Address' or contains(@placeholder,'Address')]"
+    ).first();
+    if (await addressInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const val = (await addressInput.inputValue().catch(() => '')).trim();
+      if (val.length > 0) return true;
+    }
+
+    const stateInput = this.page.locator("//label[contains(.,'State')]/following::input[1]").first();
+    if (await stateInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      const stateVal = (await stateInput.inputValue().catch(() => '')).trim();
+      if (stateVal.length > 0) return true;
+    }
+
+    const bodyText = (await this.page.innerText('body').catch(() => '')).toLowerCase();
+    if (bodyText.includes('odisha') || bodyText.includes('sambalpur') || bodyText.includes('bhubaneswar') || bodyText.includes('puri')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Helper to execute end-to-end branch submission with an invalid status GSTIN (Suspended or Cancelled)
+   * and assert that clicking Save on Screen 2 is blocked with error prompt "Kindly enter valid GSTIN".
+   */
+  public async validateInvalidGstinStatusBlocksSubmission(
+    gstinValue: string,
+    statusLabel: string
+  ): Promise<{ isBlocked: boolean; promptMessage: string }> {
+    console.log(`\n[AllScenariosPage] Testing ${statusLabel} GSTIN: "${gstinValue}"...`);
+
+    try {
+      // 1. Open form & reach Screen 1
+      await this.navigateToBranchModule();
+      await this.clickAddBranch();
+      await this.selectBranchSubtype('Branch');
+
+      // 2. Enter GSTIN
+      await this.clearGstinNumber();
+      await this.enterGstinNumber(gstinValue);
+
+      // 3. Click Fetch Details
+      await this.clickFetchDetails();
+
+      // 4. Select Address & Geofence
+      await this.selectAddressAndSaveGeofence();
+
+      // 5. Fill Screen 1
+      const excelRow = getBranchCreationRow('BranchCreation', 0);
+      const timeSuffix = Date.now().toString().slice(-6);
+      const personName = `Test${statusLabel}${timeSuffix}`;
+      const contactNo = '9237937388';
+      const branchName = `Br_${statusLabel}_${timeSuffix}`;
+      const branchEmail = `test_${statusLabel.toLowerCase()}_${timeSuffix}@gmail.com`;
+      const operationTypeVal = getFieldValue(excelRow, ['OPERATION type', 'Operation Type']) || 'BOOKING';
+      const controllingVal = getFieldValue(excelRow, ['Controlling Branch', 'ControllingBranch', 'Is Controlling']) || 'Yes';
+
+      await this.selectEffectiveStartDate();
+      await this.fillContactPersonName(personName);
+      await this.fillContactPersonPhone(contactNo);
+      await this.fillBranchName(branchName);
+      await this.fillBranchEmail(branchEmail);
+      await this.selectOperationType(operationTypeVal);
+      await this.selectIsControlling(controllingVal);
+
+      // 6. Click Next to reach Screen 2 (Infra info)
+      const nextBtn = this.page.locator(this.paths.branchOnboarding.nextButton).first();
+      await nextBtn.waitFor({ state: 'visible', timeout: 8000 });
+      await this.wait.pause(1000);
+      await nextBtn.click();
+      await this.wait.pause(2000);
+
+      // 7. Fill Screen 2
+      const gatesInput = this.page.locator(this.paths.branchOnboarding.infra.noOfGatesInput).first();
+      await gatesInput.waitFor({ state: 'visible', timeout: 12000 });
+
+      await this.fillNoOfGates('2');
+      await this.fillTotalNoOfDocks('2');
+      await this.fillOpenYardArea('1000');
+      await this.fillWarehouseFloorArea('2000');
+      await this.fillMaterialStorageCapacity('500');
+      await this.selectBranchFloor('Ground');
+      await this.wait.pause(1000);
+
+      // 8. Click Save button on Infra info page
+      console.log(`[AllScenariosPage] Clicking "Save" on Infra info with ${statusLabel} GSTIN...`);
+      const saveBtn = this.page.locator(this.paths.branchOnboarding.infra.saveButton).first();
+      await saveBtn.waitFor({ state: 'visible', timeout: 10000 });
+      await saveBtn.click();
+      await this.wait.pause(1000);
+
+      // If confirmation modal appears, click Confirm
+      const confirmBtn = this.page.locator(this.paths.branchOnboarding.confirmationModal.confirmButton).first();
+      if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('[AllScenariosPage] Confirmation modal displayed, clicking Confirm...');
+        await confirmBtn.click();
+        await this.wait.pause(1000);
+      }
+
+      // 9. Check for error toast / prompt: "Kindly enter valid GSTIN"
+      console.log('[AllScenariosPage] Waiting for prompt / error toast "Kindly enter valid GSTIN"...');
+      const toastLocator = this.page.locator(this.paths.branchOnboarding.gstInvalidStatusToast);
+      let isPromptVisible = false;
+      let promptMessage = '';
+
+      try {
+        await toastLocator.first().waitFor({ state: 'visible', timeout: 10000 });
+        promptMessage = (await toastLocator.first().innerText().catch(() => '')).trim();
+        isPromptVisible = true;
+        console.log(`[AllScenariosPage] ✅ Captured prompt/toast: "${promptMessage}"`);
+      } catch {
+        const anyToast = this.page.locator("//div[@role='alert'] | //*[contains(text(),'valid GSTIN') or contains(text(),'Kindly')]").first();
+        if (await anyToast.isVisible({ timeout: 3000 }).catch(() => false)) {
+          promptMessage = (await anyToast.innerText().catch(() => '')).trim();
+          isPromptVisible = true;
+          console.log(`[AllScenariosPage] Captured fallback toast: "${promptMessage}"`);
+        }
+      }
+
+      // Check if branch was accidentally created successfully (user rule: agar successfully create hota hai toh case failed ho jayega)
+      const successToast = this.page.locator("//div[@role='alert' and (contains(translate(., 'SUCCESS', 'success'), 'success') or contains(.,'created') or contains(.,'Created'))]").first();
+      const isSuccess = await successToast.isVisible({ timeout: 2000 }).catch(() => false);
+      if (isSuccess) {
+        const succMsg = (await successToast.innerText().catch(() => '')).trim();
+        console.error(`[AllScenariosPage] ❌ FAILED: Branch was unexpectedly created with ${statusLabel} GSTIN! Message: "${succMsg}"`);
+        return { isBlocked: false, promptMessage: `UNEXPECTED SUCCESS (Creation succeeded): ${succMsg}` };
+      }
+
+      // Verify creation was blocked: error prompt must be displayed and no success occurred
+      const isBlocked = isPromptVisible && !isSuccess;
+
+      console.log(`[AllScenariosPage] ${statusLabel} GSTIN submission result -> Blocked: ${isBlocked}, Prompt: "${promptMessage}"`);
+      return { isBlocked, promptMessage };
+    } catch (err: any) {
+      console.error(`[AllScenariosPage] ❌ Exception in ${statusLabel} GSTIN validation:`, err.message);
+      return { isBlocked: false, promptMessage: `Step failed / Exception: ${err.message}` };
+    } finally {
+      // Auto-cleanup: Dismiss any open modals or forms so next case starts clean!
+      try {
+        await this.page.keyboard.press('Escape').catch(() => {});
+        const cancelBtn = this.page.locator("//button[normalize-space()='Cancel'] | //button[contains(.,'Cancel')] | //button[normalize-space()='Back']").first();
+        if (await cancelBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await cancelBtn.click().catch(() => {});
+        }
+        await this.wait.pause(500);
+      } catch {}
+    }
+  }
+
+  // =========================================================================
+  // SCENARIO 5: GSTIN ENTRY & VALIDATION (TC_05.1 - TC_05.5)
+  // =========================================================================
+  public async executeScenario5_GstinEntryAndValidation(): Promise<{
+    case_TC_05_1_hasChecksumError: boolean;
+    case_TC_05_2_isDisabled: boolean;
+    case_TC_05_3_isRestrictedOrDisabled: boolean;
+    case_TC_05_4_isSuspendedBlocked: boolean;
+    case_TC_05_5_isCancelledBlocked: boolean;
+    toastMessages: {
+      tc05_1_msg: string;
+      tc05_4_msg: string;
+      tc05_5_msg: string;
+    };
+  }> {
+    console.log('\n======================================================');
+    console.log('[Scenario 5] Executing GSTIN Entry & Validation (TC_05.1 - TC_05.5)...');
+    console.log('======================================================');
+
+    let case_TC_05_1_hasChecksumError = false;
+    let case_TC_05_2_isDisabled = false;
+    let case_TC_05_3_isRestrictedOrDisabled = false;
+    let case_TC_05_4_isSuspendedBlocked = false;
+    let case_TC_05_5_isCancelledBlocked = false;
+    let tc05_1_msg = '';
+    let tc05_4_msg = '';
+    let tc05_5_msg = '';
+
+    // --- TC_05.2: GSTIN less than 15 characters -> Fetch Details button disabled ---
+    try {
+      console.log('\n--- [TC_05.2] Testing GSTIN less than 15 characters ---');
+      await this.navigateToBranchModule();
+      await this.clickAddBranch();
+      await this.selectBranchSubtype('Branch');
+      const gstinLessThan15 = getGstinLessThan15();
+      await this.clearGstinNumber();
+      await this.enterGstinNumber(gstinLessThan15);
+      case_TC_05_2_isDisabled = await this.isFetchDetailsButtonDisabled();
+      console.log(`[Scenario 5] TC_05.2 Result -> Fetch Details Disabled (<15 chars): ${case_TC_05_2_isDisabled}`);
+    } catch (err: any) {
+      console.error('[Scenario 5] TC_05.2 Error:', err.message);
+    }
+
+    // --- TC_05.3: GSTIN more than 15 characters -> Fetch Details button disabled / input capped ---
+    try {
+      console.log('\n--- [TC_05.3] Testing GSTIN more than 15 characters ---');
+      const gstinMoreThan15 = getGstinMoreThan15();
+      await this.clearGstinNumber();
+      await this.enterGstinNumber(gstinMoreThan15);
+      const gstinInputLoc = this.page.locator(this.paths.branchOnboarding.gstinInput).first();
+      const actualEnteredVal = (await gstinInputLoc.inputValue().catch(() => '')).trim();
+      const isBtnDisabledMore15 = await this.isFetchDetailsButtonDisabled();
+      const isRestrictedByLength = actualEnteredVal.length <= 15;
+      case_TC_05_3_isRestrictedOrDisabled = isBtnDisabledMore15 || isRestrictedByLength;
+      console.log(`[Scenario 5] TC_05.3 Result -> Capped or Disabled (>15 chars): ${case_TC_05_3_isRestrictedOrDisabled} (Entered: ${actualEnteredVal.length} chars, Disabled: ${isBtnDisabledMore15})`);
+    } catch (err: any) {
+      console.error('[Scenario 5] TC_05.3 Error:', err.message);
+    }
+
+    // --- TC_05.1: Invalid/incorrect checksum GSTIN -> Click Fetch Details -> Validation error ---
+    try {
+      console.log('\n--- [TC_05.1] Testing Invalid/incorrect checksum GSTIN ---');
+      const invalidChecksumGstin = getInvalidChecksumGstin();
+      await this.clearGstinNumber();
+      await this.enterGstinNumber(invalidChecksumGstin);
+      await this.clickFetchDetails();
+
+      const checksumToastLoc = this.page.locator(this.paths.branchOnboarding.gstChecksumErrorToast);
+      try {
+        await checksumToastLoc.first().waitFor({ state: 'visible', timeout: 10000 });
+        tc05_1_msg = (await checksumToastLoc.first().innerText().catch(() => '')).trim();
+        case_TC_05_1_hasChecksumError = true;
+        console.log(`[Scenario 5] TC_05.1 Result -> Validation Error captured: "${tc05_1_msg}"`);
+      } catch {
+        const anyAlert = this.page.locator("//div[@role='alert'] | //*[contains(text(),'Failed') or contains(text(),'GST')]").first();
+        if (await anyAlert.isVisible({ timeout: 4000 }).catch(() => false)) {
+          tc05_1_msg = (await anyAlert.innerText().catch(() => '')).trim();
+          case_TC_05_1_hasChecksumError = true;
+          console.log(`[Scenario 5] TC_05.1 Result -> Fallback Error captured: "${tc05_1_msg}"`);
+        }
+      }
+    } catch (err: any) {
+      console.error('[Scenario 5] TC_05.1 Error:', err.message);
+    } finally {
+      await this.page.keyboard.press('Escape').catch(() => {});
+      await this.wait.pause(1000);
+    }
+
+    // --- TC_05.4: Suspended GSTIN -> Full flow to Infra Save -> Prompt "Kindly enter valid GSTIN" ---
+    try {
+      console.log('\n--- [TC_05.4] Testing Suspended GSTIN submission restriction ---');
+      const suspendedGstin = getSuspendedGstin();
+      const res5_4 = await this.validateInvalidGstinStatusBlocksSubmission(suspendedGstin, 'Suspended');
+      case_TC_05_4_isSuspendedBlocked = res5_4.isBlocked;
+      tc05_4_msg = res5_4.promptMessage;
+    } catch (err: any) {
+      console.error('[Scenario 5] TC_05.4 Encountered Error (Moving to TC_05.5):', err.message);
+      tc05_4_msg = `Error: ${err.message}`;
+    }
+
+    // --- TC_05.5: Cancelled GSTIN -> Full flow to Infra Save -> Prompt "Kindly enter valid GSTIN" ---
+    try {
+      console.log('\n--- [TC_05.5] Testing Cancelled GSTIN submission restriction ---');
+      const cancelledGstin = getCancelledGstin();
+      const res5_5 = await this.validateInvalidGstinStatusBlocksSubmission(cancelledGstin, 'Cancelled');
+      case_TC_05_5_isCancelledBlocked = res5_5.isBlocked;
+      tc05_5_msg = res5_5.promptMessage;
+    } catch (err: any) {
+      console.error('[Scenario 5] TC_05.5 Encountered Error:', err.message);
+      tc05_5_msg = `Error: ${err.message}`;
+    }
+
+    return {
+      case_TC_05_1_hasChecksumError,
+      case_TC_05_2_isDisabled,
+      case_TC_05_3_isRestrictedOrDisabled,
+      case_TC_05_4_isSuspendedBlocked,
+      case_TC_05_5_isCancelledBlocked,
+      toastMessages: {
+        tc05_1_msg,
+        tc05_4_msg,
+        tc05_5_msg,
+      },
+    };
+  }
+
+  // =========================================================================
+  // SCENARIO 6: OFFICE ADDRESS DETAILS SELECTION FUNCTIONALITY (TC_06.1 - TC_06.8)
+  // =========================================================================
+  public async executeScenario6_OfficeAddressSelectionFunctionality(): Promise<{
+    case_TC_06_1_isFirstSelectedByDefault: boolean;
+    case_TC_06_2_isSecondSelected: boolean;
+    case_TC_06_3_isOnlyOneSelected: boolean;
+    case_TC_06_4_isPreviousDeselected: boolean;
+    case_TC_06_5_isSelectedAfterScroll: boolean;
+    case_TC_06_6_isAddressApplied: boolean;
+    case_TC_06_7_isPopupClosedWithoutApplying: boolean;
+    case_TC_06_8_isPopupClosedViaXWithoutApplying: boolean;
+  }> {
+    console.log('\n======================================================');
+    console.log('[Scenario 6] Executing Office Address Details Selection Functionality...');
+    console.log('======================================================');
+
+    const validGstin = this.getValidGstinFromExcel('BranchCreation');
+
+    // Step 1: Open Form & Fetch Details to trigger popup
+    await this.navigateToBranchModule();
+    await this.clickAddBranch();
+    await this.selectBranchSubtype('Branch');
+    await this.enterGstinNumber(validGstin);
+    await this.clickFetchDetails();
+
+    const isPopupOpen = await this.isOfficeAddressPopupDisplayed();
+    expect(isPopupOpen, 'Office Address Details popup must be displayed upon fetching valid GSTIN').toBeTruthy();
+
+    // --- TC_06.1: First office address is selected by default ---
+    console.log('\n--- [TC_06.1] Verifying first office address is selected by default ---');
+    await this.wait.pause(1000);
+    const case_TC_06_1_isFirstSelectedByDefault = await this.isOfficeAddressRadioChecked(0);
+    console.log(`[Scenario 6] TC_06.1 Result -> First address selected by default: ${case_TC_06_1_isFirstSelectedByDefault}`);
+
+    // --- TC_06.2: User can select an office address using radio button ---
+    console.log('\n--- [TC_06.2] Verifying user can select 2nd office address ---');
+    await this.selectOfficeAddressRadio(1);
+    await this.wait.pause(500);
+    const case_TC_06_2_isSecondSelected = await this.isOfficeAddressRadioChecked(1);
+    console.log(`[Scenario 6] TC_06.2 Result -> Second address selected: ${case_TC_06_2_isSecondSelected}`);
+
+    // --- TC_06.3: Only one office address can be selected at a time ---
+    console.log('\n--- [TC_06.3] Verifying only one office address can be selected at a time ---');
+    const checkedCount = await this.getCheckedOfficeAddressRadiosCount();
+    const case_TC_06_3_isOnlyOneSelected = (checkedCount === 1);
+    console.log(`[Scenario 6] TC_06.3 Result -> Only one address selected: ${case_TC_06_3_isOnlyOneSelected} (Checked count: ${checkedCount})`);
+
+    // --- TC_06.4: Previous selection gets deselected when another is selected ---
+    console.log('\n--- [TC_06.4] Verifying previous 1st address was deselected ---');
+    const isFirstStillChecked = await this.isOfficeAddressRadioChecked(0);
+    const case_TC_06_4_isPreviousDeselected = !isFirstStillChecked;
+    console.log(`[Scenario 6] TC_06.4 Result -> 1st address deselected: ${case_TC_06_4_isPreviousDeselected}`);
+
+    // --- TC_06.5: User can select an office address from the list after scrolling ---
+    console.log('\n--- [TC_06.5] Scrolling down and selecting an address ---');
+    await this.scrollOfficeAddressList(4);
+    await this.selectOfficeAddressRadio(4);
+    await this.wait.pause(500);
+    const case_TC_06_5_isSelectedAfterScroll = await this.isOfficeAddressRadioChecked(4);
+    console.log(`[Scenario 6] TC_06.5 Result -> Address selected after scroll: ${case_TC_06_5_isSelectedAfterScroll}`);
+
+    // --- TC_06.6: Apply selected office address on clicking Select Address ---
+    console.log('\n--- [TC_06.6] Clicking Select Address and verifying applied on Branch form ---');
+    await this.clickSelectAddressInPopup();
+
+    // Handle Geofence modal Save
+    const geofenceModal = this.page.locator(this.paths.branchOnboarding.geofenceModal.modalContainer).first();
+    if (await geofenceModal.isVisible({ timeout: 8000 }).catch(() => false)) {
+      const geofenceSave = this.page.locator(this.paths.branchOnboarding.geofenceModal.saveButton).first();
+      await geofenceSave.click().catch(() => {});
+      await this.wait.waitForModalBackdropClosed(10000).catch(() => {});
+      await this.wait.pause(1000);
+    }
+
+    const case_TC_06_6_isAddressApplied = await this.isBranchAddressApplied();
+    console.log(`[Scenario 6] TC_06.6 Result -> Selected address applied to Branch details: ${case_TC_06_6_isAddressApplied}`);
+
+    // --- TC_06.7: System closes the office address popup on clicking Cancel ---
+    console.log('\n--- [TC_06.7] Re-triggering popup and testing Cancel button ---');
+    await this.clearGstinNumber();
+    await this.enterGstinNumber(validGstin);
+    await this.clickFetchDetails();
+    const isPopupOpenTC7 = await this.isOfficeAddressPopupDisplayed();
+    if (isPopupOpenTC7) {
+      await this.selectOfficeAddressRadio(2);
+      await this.clickCancelInOfficeAddressPopup();
+    }
+    const case_TC_06_7_isPopupClosedWithoutApplying = !(await this.isOfficeAddressPopupVisible());
+    console.log(`[Scenario 6] TC_06.7 Result -> Popup closed on Cancel without applying: ${case_TC_06_7_isPopupClosedWithoutApplying}`);
+
+    // --- TC_06.8: System closes the office address popup on clicking the X icon ---
+    console.log('\n--- [TC_06.8] Re-triggering popup and testing "X" close icon ---');
+    await this.clearGstinNumber();
+    await this.enterGstinNumber(validGstin);
+    await this.clickFetchDetails();
+    const isPopupOpenTC8 = await this.isOfficeAddressPopupDisplayed();
+    if (isPopupOpenTC8) {
+      await this.selectOfficeAddressRadio(3);
+      await this.clickCloseXInOfficeAddressPopup();
+    }
+    const case_TC_06_8_isPopupClosedViaXWithoutApplying = !(await this.isOfficeAddressPopupVisible());
+    console.log(`[Scenario 6] TC_06.8 Result -> Popup closed on 'X' without applying: ${case_TC_06_8_isPopupClosedViaXWithoutApplying}`);
+
+    return {
+      case_TC_06_1_isFirstSelectedByDefault,
+      case_TC_06_2_isSecondSelected,
+      case_TC_06_3_isOnlyOneSelected,
+      case_TC_06_4_isPreviousDeselected,
+      case_TC_06_5_isSelectedAfterScroll,
+      case_TC_06_6_isAddressApplied,
+      case_TC_06_7_isPopupClosedWithoutApplying,
+      case_TC_06_8_isPopupClosedViaXWithoutApplying,
+    };
   }
 }
 

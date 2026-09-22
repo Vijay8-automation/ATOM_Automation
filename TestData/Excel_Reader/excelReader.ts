@@ -149,5 +149,73 @@ export function getBaseUrl(preferredSheet: string = 'Environment', defaultUrl: s
     }
   }
 
+  const serviceIamUrl = getServiceBaseUrl('iam');
+  if (serviceIamUrl) {
+    return serviceIamUrl;
+  }
+
+  return defaultUrl.replace(/\/+$/, '');
+}
+
+/**
+ * Reads service-specific Base URL from the "URL's" sheet in TestData.xlsx.
+ * Supports: 'web (FE)', 'iam', 'booking', 'lmfm', 'mm', 'network', 'notification', 'driverapp', 'scanning'.
+ */
+export function getServiceBaseUrl(serviceKey: string, defaultUrl: string = ''): string {
+  const workbook = getWorkbook();
+  if (workbook && workbook.SheetNames.length > 0) {
+    const xlsx = require('xlsx');
+    // Look for sheet named "URL's" or "URLs" or containing "url"
+    const targetSheetName = workbook.SheetNames.find(
+      (s: string) => {
+        const clean = s.trim().toLowerCase().replace(/['"’]/g, '');
+        return clean === 'urls' || clean.includes('url');
+      }
+    );
+
+    if (targetSheetName) {
+      const worksheet = workbook.Sheets[targetSheetName];
+      const rows: Record<string, any>[] = xlsx.utils.sheet_to_json(worksheet, { defval: '' });
+
+      if (rows && rows.length > 0) {
+        const cleanTarget = serviceKey.replace(/[\s_\-()]/g, '').toLowerCase();
+
+        for (const row of rows) {
+          for (const [colName, val] of Object.entries(row)) {
+            const cleanCol = colName.replace(/[\s_\-()]/g, '').toLowerCase();
+            if (cleanCol === cleanTarget || (cleanTarget.length > 2 && cleanCol.includes(cleanTarget)) || (cleanCol.length > 2 && cleanTarget.includes(cleanCol))) {
+              const urlStr = String(val).trim();
+              if (urlStr && (urlStr.startsWith('http://') || urlStr.startsWith('https://'))) {
+                return urlStr.replace(/\/+$/, '');
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback defaults matching cluster configuration
+  const fallbackDefaults: Record<string, string> = {
+    web: 'http://10.10.130.123:30000',
+    fe: 'http://10.10.130.123:30000',
+    iam: 'http://10.10.130.123:30081',
+    booking: 'http://10.10.130.123:30082',
+    lmfm: 'http://10.10.130.123:30083',
+    mm: 'http://10.10.130.123:30084',
+    network: 'http://10.10.130.123:30085',
+    notification: 'http://10.10.130.123:30086',
+    driverapp: 'http://10.10.130.123:30087',
+    bff: 'http://10.10.130.123:30087',
+    scanning: 'http://10.10.130.123:30088',
+  };
+
+  const cleanKey = serviceKey.toLowerCase().replace(/[\s_\-()]/g, '');
+  for (const [k, v] of Object.entries(fallbackDefaults)) {
+    if (cleanKey.includes(k) || k.includes(cleanKey)) {
+      return v;
+    }
+  }
+
   return defaultUrl.replace(/\/+$/, '');
 }

@@ -114,11 +114,24 @@ export const CommonPaths = {
     gstinInput: "//input[contains(@placeholder,'Enter GSTIN No.')] | //label[contains(.,'GSTIN')]/following::input[1] | //input[contains(@name,'gstin') or contains(@id,'gstin')]",
     fetchDetailsButton: "//button[contains(.,'Fetch Details')]",
     gstSuccessToast: "//*[contains(text(),'GST data fetched successfully')] | //div[contains(.,'GST data fetched successfully')] | //span[contains(.,'GST data fetched successfully')]",
+    gstChecksumErrorToast: "//*[contains(text(),'Failed to fetch GST data')] | //div[contains(.,'Failed to fetch GST data')] | //span[contains(.,'Failed to fetch GST data')] | //div[@role='alert']",
+    gstInvalidStatusToast: "//*[contains(text(),'Kindly enter valid GSTIN') or contains(text(),'valid GSTIN')] | //div[contains(.,'Kindly enter valid GSTIN') or contains(.,'valid GSTIN')] | //div[@role='alert']",
 
     // Office Address Details Popup & Select Address
-    officeAddressPopup: "//div[contains(.,'Office Address Details') and contains(@class,'fixed')] | //div[contains(@role,'dialog') and contains(.,'Office Address')] | //div[contains(.,'Office Address Details')]",
-    selectAddressButton: "//button[contains(.,'Select Address')] | //button[normalize-space()='Select Address']",
-    selectAddressPopupButton: "//button[contains(.,'Select Address')] | //button[normalize-space()='Select Address']",
+    officeAddressPopup: "//div[contains(.,'Office Address Details') and (contains(@class,'fixed') or @role='dialog')]",
+    officeAddressPopupModal: "//div[contains(.,'Office Address Details') and (contains(@class,'fixed') or @role='dialog')]",
+    officeAddressTitle: "//div[contains(.,'Office Address Details')]//h2[contains(.,'Office Address Details')] | //div[contains(.,'Office Address Details')]//*[contains(text(),'Office Address Details')]",
+    officeAddressCloseIcon: "//div[contains(.,'Office Address Details')]//*[@data-testid='CloseIcon']/ancestor-or-self::button | //div[contains(.,'Office Address Details')]//button[.//svg or @aria-label='close' or @aria-label='Close' or contains(.,'×')] | //div[contains(.,'Office Address Details')]//*[@data-testid='CloseIcon'] | //div[contains(.,'Office Address Details')]//button[contains(@class,'MuiIconButton-root')]",
+    officeAddressScrollContainer: "//div[contains(.,'Office Address Details')]//div[contains(@class,'overflow') or contains(@class,'scroll') or .//input[@type='radio']]",
+    officeAddressRadioList: "//div[contains(.,'Office Address Details')]//input[@type='radio']",
+    officeAddressMuiRadioList: "//div[contains(.,'Office Address Details')]//span[contains(@class,'MuiRadio-root')] | //div[contains(.,'Office Address Details')]//input[@type='radio']/..",
+    officeAddressFirstRadio: "(//div[contains(.,'Office Address Details')]//input[@type='radio'])[1]",
+    officeAddressFirstRadioWrapper: "(//div[contains(.,'Office Address Details')]//span[contains(@class,'MuiRadio-root')])[1]",
+    officeAddressItemRows: "//div[contains(.,'Office Address Details')]//div[.//input[@type='radio'] or .//span[contains(@class,'MuiRadio-root')]]",
+    selectAddressButton: "//div[contains(.,'Office Address Details')]//button[normalize-space()='Select Address'] | //button[normalize-space()='Select Address'] | //button[contains(text(),'Select Address')]",
+    selectAddressPopupButton: "//div[contains(.,'Office Address Details')]//button[normalize-space()='Select Address'] | //button[normalize-space()='Select Address'] | //button[contains(text(),'Select Address')]",
+    cancelAddressPopupButton: "//div[contains(.,'Office Address Details')]//button[normalize-space()='Cancel']",
+    changeAddressButton: "//button[normalize-space()='Change' or contains(.,'Change')]",
 
     // Geofence Modal ("Set Geofence Location" popup)
     geofenceModal: {

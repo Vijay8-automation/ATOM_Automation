@@ -8,6 +8,47 @@ import * as path from 'path';
 const ENV_FILE_PATH = path.resolve(__dirname, '../TestData/environment.json');
 
 /**
+ * Centralized Static Configuration Values.
+ * Defined directly in VariableManager so all API modules (Booking, LMFM, MM, Network, Scanning, etc.)
+ * can reuse them without duplicating values in individual test scripts.
+ */
+export const DEFAULT_STATIC_CONFIG: Record<string, any> = {
+  companyCode: 400021,
+  companyId: 'bc6e8034-70eb-5804-8dc5-0bad36f31812',
+  bookingBranch: '7500',
+  sourceBranch: '1001',
+  destinationBranch: '2115',
+  billingPartyCode: 'CUS0000025B',
+  customerCode: 'CUS0000025B',
+  customerType: 'BUSINESS',
+  pickupPincode: '201309',
+  deliveryPincode: '400604',
+  consignorPincode: '201309',
+  consignorCode: 'CUS0000025B',
+  consignorGstin: '33AFSPR6315L1ZW',
+  consigneeCode: 'CUS0000024R',
+  consigneeGstin: '06AJOPK4609C1ZD',
+  deliveryAddressId: 1,
+  pickupLocationId: 1,
+  transportMode: 'ROAD',
+  loadType: 'PTL',
+  freightMode: 'CREDIT',
+  docketSource: 'WEB',
+  createdBy: 'a1a1a1a1-0001-4000-8000-000000000001',
+  actor: 'a1a1a1a1-0001-4000-8000-000000000001',
+  driverCode: '101',
+  driverName: 'Ramesh Kumar',
+  driverMobile: '9876543210',
+  priority: 'MEDIUM',
+  vehicleType: '32FT',
+  vehicleCapacityKg: 10000,
+  vehicleOwnership: 'OWNED',
+  vendorCode: 'VEND-001',
+  routeType: 'FEEDER',
+  tripCreationSource: 'MANUAL',
+};
+
+/**
  * Postman-style Environment Store.
  * Allows storing, retrieving, and sharing dynamic variables (tokens, entity IDs, test data)
  * across tests, modules, and API-to-UI workflows.
@@ -21,21 +62,27 @@ class EnvironmentStore {
   }
 
   /**
-   * Loads persisted variables from environment.json into memory.
+   * Loads persisted variables from environment.json into memory,
+   * seeded with DEFAULT_STATIC_CONFIG so variables are always available.
    */
   private loadFromFile(): void {
+    // 1. Pre-populate with all static configuration values
+    this.cache = new Map(Object.entries(DEFAULT_STATIC_CONFIG));
+
+    // 2. Overlay any updated or runtime variables from environment.json
     try {
       if (fs.existsSync(ENV_FILE_PATH)) {
         const rawContent = fs.readFileSync(ENV_FILE_PATH, 'utf-8').trim();
         if (rawContent) {
           const data = JSON.parse(rawContent);
-          this.cache = new Map(Object.entries(data));
+          for (const [key, value] of Object.entries(data)) {
+            this.cache.set(key, value);
+          }
         }
       }
       this.initialized = true;
     } catch (err: any) {
       console.warn(`[VariableManager] Warning reading ${ENV_FILE_PATH}:`, err.message);
-      this.cache = new Map();
       this.initialized = true;
     }
   }
@@ -57,7 +104,7 @@ class EnvironmentStore {
   }
 
   /**
-   * Sets an environment variable (Equivalent to Postman: pm.environment.set("key", value)).
+   * Sets an environment variable 
    * Automatically persists to TestData/environment.json.
    *
    * @param key Variable name
@@ -71,7 +118,7 @@ class EnvironmentStore {
   }
 
   /**
-   * Retrieves an environment variable (Equivalent to Postman: pm.environment.get("key")).
+   * Retrieves an environment variable 
    *
    * @param key Variable name
    * @param defaultValue Optional fallback value if key does not exist

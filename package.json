@@ -23,6 +23,8 @@
     "test:ui:scenario2": "npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g \"Scenario 2\" --project=chromium --headed",
     "test:ui:scenario3": "npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g \"Scenario 3\" --project=chromium --headed",
     "test:ui:scenario4": "npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g \"Scenario 4\" --project=chromium --headed",
+    "test:ui:scenario5": "npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g \"Scenario 5\" --project=chromium --headed",
+    "test:ui:scenario6": "npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts -g \"Scenario 6\" --project=chromium --headed",
     "test:ui:all_scenarios": "npx playwright test tests/Modules/Onboarding/Branch/All_Scenarios.spec.ts --project=chromium --headed",
     "test:ui:headed": "npx playwright test --project=chromium --headed",
     "test:ci": "npx playwright test",

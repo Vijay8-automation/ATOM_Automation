@@ -10,3 +10,4 @@ TestData/environment.json
 *.log
 .DS_Store
 scratch/
+*.zip

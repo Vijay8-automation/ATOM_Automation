@@ -37,6 +37,39 @@ export default defineConfig({
   },
   projects: [
     {
+      name: 'api-smoke',
+      testDir: apiTestsDir,
+      testMatch: /.*Smoke.*\.spec\.ts/i,
+      use: {
+        ignoreHTTPSErrors: true,
+        extraHTTPHeaders: {
+          'Content-Type': 'application/json',
+        },
+      },
+    },
+    {
+      name: 'api-positive',
+      testDir: apiTestsDir,
+      testMatch: /.*Positive.*\.spec\.ts/i,
+      use: {
+        ignoreHTTPSErrors: true,
+        extraHTTPHeaders: {
+          'Content-Type': 'application/json',
+        },
+      },
+    },
+    {
+      name: 'api-negative',
+      testDir: apiTestsDir,
+      testMatch: /.*Negative.*\.spec\.ts/i,
+      use: {
+        ignoreHTTPSErrors: true,
+        extraHTTPHeaders: {
+          'Content-Type': 'application/json',
+        },
+      },
+    },
+    {
       name: 'api',
       testDir: apiTestsDir,
       use: {

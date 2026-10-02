@@ -3,7 +3,7 @@ import { BaseAPI } from '../../Common/BaseAPI';
 
 export class NotificationAPI {
   public static readonly serviceKey = 'notification';
-  public static readonly basePath = '/notification-service/v1/api';
+  public static readonly basePath = '/notification/v1/api';
 
   public static getBaseUrl(): string {
     return BaseAPI.getServiceUrl(this.serviceKey, 'http://10.10.130.123:30086');

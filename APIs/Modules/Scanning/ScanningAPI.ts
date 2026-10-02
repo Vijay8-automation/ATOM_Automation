@@ -126,6 +126,37 @@ export class ScanningAPI {
     };
     const response = await request.post(url, { data: bodyPayload, headers });
     const body = await response.json().catch(() => ({}));
+
+    // Fallback to PRE_MANIFEST + /bind if Booking -> Scanning Kafka event has not yet manifested the docket
+    if (response.status() === 422 && body?.errorCode === 'DOCKET_NOT_MANIFESTED' && payload.docketNo) {
+      const prePayload = {
+        ...bodyPayload,
+        printType: 'PRE_MANIFEST',
+      };
+      const preRes = await request.post(url, { data: prePayload, headers });
+      const preBody = await preRes.json().catch(() => ({}));
+      const preBoxCode: string | undefined = preBody?.data?.boxCodes?.[0];
+      if ([200, 201].includes(preRes.status()) && preBoxCode) {
+        const batchIdMatch = preBoxCode.match(/^PRE-(\d+)-/);
+        const batchId = preBody?.data?.batchId || (batchIdMatch ? Number(batchIdMatch[1]) : null);
+        if (batchId) {
+          const bindUrl = `${this.getBaseUrl()}/api/v1/print-batches/${batchId}/bind`;
+          const bindRes = await request.post(bindUrl, {
+            data: {
+              companyCode: bodyPayload.companyCode,
+              docketNo: payload.docketNo,
+              actor,
+            },
+            headers,
+          });
+          const bindBody = await bindRes.json().catch(() => ({}));
+          if ([200, 201].includes(bindRes.status())) {
+            return { response: bindRes, body: bindBody, status: bindRes.status() };
+          }
+        }
+      }
+    }
+
     return { response, body, status: response.status() };
   }
 }

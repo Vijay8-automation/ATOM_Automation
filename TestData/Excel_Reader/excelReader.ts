@@ -219,3 +219,53 @@ export function getServiceBaseUrl(serviceKey: string, defaultUrl: string = ''): 
 
   return defaultUrl.replace(/\/+$/, '');
 }
+
+/**
+ * Reads LMFM test data (vehicles, vehicle types, clusters) from LMFM_Data sheet in TestData.xlsx.
+ */
+export function getLMFMTestData(): {
+  vehicles: string[];
+  vehicleType: string;
+  clusters: Record<string, number>;
+} {
+  const defaultData = {
+    vehicles: ['MH02DE1001', 'MH02DE1002', 'MH02DE1003'],
+    vehicleType: '14FT',
+    clusters: { '2115': 7552, '803': 20448 }
+  };
+
+  try {
+    const rows = readExcelSheet<any>(DEFAULT_EXCEL_PATH, 'LMFM_Data');
+    if (rows && rows.length > 0) {
+      const vehicles: string[] = [];
+      let vehicleType = '14FT';
+      const clusters: Record<string, number> = {};
+
+      for (const row of rows) {
+        const vNo = row.VehicleNo || row.vehicleNo || row.Vehicle;
+        if (vNo && !vehicles.includes(String(vNo).trim())) {
+          vehicles.push(String(vNo).trim());
+        }
+        const vType = row.VehicleType || row.vehicleType;
+        if (vType) {
+          vehicleType = String(vType).trim();
+        }
+        const bCode = row.BranchCode || row.branchCode;
+        const cId = row.ClusterId || row.clusterId || row.zoneId;
+        if (bCode && cId) {
+          clusters[String(bCode).trim()] = Number(cId);
+        }
+      }
+
+      return {
+        vehicles: vehicles.length > 0 ? vehicles : defaultData.vehicles,
+        vehicleType: vehicleType || defaultData.vehicleType,
+        clusters: Object.keys(clusters).length > 0 ? clusters : defaultData.clusters,
+      };
+    }
+  } catch (err: any) {
+    console.warn('[ExcelReader] Error loading LMFM_Data sheet:', err.message);
+  }
+
+  return defaultData;
+}

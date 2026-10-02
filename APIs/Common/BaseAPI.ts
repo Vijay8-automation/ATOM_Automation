@@ -21,18 +21,38 @@ export class BaseAPI {
   private static inMemoryToken: string | null = null;
 
   /**
+   * Checks whether a JWT token is still valid (not expired, with a 60s safety buffer).
+   */
+  private static isTokenValid(token: string): boolean {
+    if (!token || typeof token !== 'string') return false;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return false;
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
+      if (payload.exp && typeof payload.exp === 'number') {
+        const nowSec = Math.floor(Date.now() / 1000);
+        return payload.exp > nowSec + 60;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Reads saved Bearer token from in-memory cache, authToken.json, or pm.environment.
-   * Returns empty string if no token exists yet.
+   * Returns empty string if no valid (non-expired) token exists yet.
    */
   public static getSavedAuthToken(): string {
     // 1. Check in-memory cache
-    if (this.inMemoryToken) {
+    if (this.inMemoryToken && this.isTokenValid(this.inMemoryToken)) {
       return this.inMemoryToken;
     }
+    this.inMemoryToken = null;
 
     // 2. Check pm.environment variable store
     const pmToken = pm.environment.get('authToken');
-    if (pmToken && typeof pmToken === 'string') {
+    if (pmToken && typeof pmToken === 'string' && this.isTokenValid(pmToken)) {
       this.inMemoryToken = pmToken;
       return pmToken;
     }
@@ -41,7 +61,7 @@ export class BaseAPI {
     try {
       if (fs.existsSync(TOKEN_FILE_PATH)) {
         const data = JSON.parse(fs.readFileSync(TOKEN_FILE_PATH, 'utf-8'));
-        if (data.accessToken) {
+        if (data.accessToken && this.isTokenValid(data.accessToken)) {
           this.inMemoryToken = data.accessToken;
           return data.accessToken;
         }

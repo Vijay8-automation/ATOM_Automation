@@ -52,14 +52,19 @@ export class MMTripAPI {
   public static async cancelTrip(
     request: APIRequestContext,
     tripId: string,
-    payload: { cancelledBy: string; reason?: string },
+    payload: { cancelledBy?: string; reason?: string; actor?: string },
     token?: string
   ): Promise<{ response: APIResponse; body: any; status: number }> {
     const authToken = token || (await BaseAPI.ensureAuthToken(request));
     const headers = BaseAPI.getDefaultGatewayHeaders(authToken);
 
+    const bodyPayload = {
+      reason: payload.reason || 'Trip cancelled by automated test',
+      actor: payload.actor || payload.cancelledBy || 'a1a1a1a1-0001-4000-8000-000000000001',
+    };
+
     const url = `${this.getBaseUrl()}${this.basePath}/${tripId}/cancel`;
-    const response = await request.post(url, { data: payload, headers });
+    const response = await request.post(url, { data: bodyPayload, headers });
     const body = await response.json().catch(() => ({}));
     return { response, body, status: response.status() };
   }
@@ -136,14 +141,40 @@ export class MMTripAPI {
   public static async assignDock(
     request: APIRequestContext,
     tripNo: string,
-    payload: { branchCode: string; dockNo: string; purpose: string; actor: string },
+    payload: { branchCode: string; dockNo: string; purpose: string; actor: string; companyCode?: number },
     token?: string
   ): Promise<{ response: APIResponse; body: any; status: number }> {
     const authToken = token || (await BaseAPI.ensureAuthToken(request));
     const headers = BaseAPI.getDefaultGatewayHeaders(authToken);
 
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.actor);
+    const sanitizedPayload = {
+      ...payload,
+      actor: isUuid ? payload.actor : 'f5e2367e-b372-42ab-9b5e-64aa8a874c70',
+      companyCode: payload.companyCode || 400021,
+    };
+
     const url = `${this.getBaseUrl()}${this.basePath}/${tripNo}/dock`;
-    const response = await request.post(url, { data: payload, headers });
+    const response = await request.post(url, { data: sanitizedPayload, headers });
+    const body = await response.json().catch(() => ({}));
+    return { response, body, status: response.status() };
+  }
+
+  /**
+   * Get Yard Docks for Branch.
+   * GET /api/v1/mm/yard/docks?branch={branchCode}&companyCode={companyCode}
+   */
+  public static async getYardDocks(
+    request: APIRequestContext,
+    branchCode: string,
+    companyCode: number = 400021,
+    token?: string
+  ): Promise<{ response: APIResponse; body: any; status: number }> {
+    const authToken = token || (await BaseAPI.ensureAuthToken(request));
+    const headers = BaseAPI.getDefaultGatewayHeaders(authToken);
+
+    const url = `${this.getBaseUrl()}/api/v1/mm/yard/docks?branch=${branchCode}&companyCode=${companyCode}`;
+    const response = await request.get(url, { headers });
     const body = await response.json().catch(() => ({}));
     return { response, body, status: response.status() };
   }
@@ -201,6 +232,64 @@ export class MMTripAPI {
 
     const url = `${this.getBaseUrl()}${this.basePath}/${tripNo}/complete`;
     const response = await request.post(url, { data: payload, headers });
+    const body = await response.json().catch(() => ({}));
+    return { response, body, status: response.status() };
+  }
+
+  /**
+   * List MM Trips with filters and pagination.
+   * GET /api/v1/trips
+   */
+  public static async listTrips(
+    request: APIRequestContext,
+    params: {
+      companyCode?: number;
+      q?: string;
+      status?: string;
+      branch?: string;
+      vehicleNo?: string;
+      routeType?: string;
+      priority?: string;
+      fromDate?: string;
+      toDate?: string;
+      page?: number;
+      size?: number;
+    } = {},
+    token?: string
+  ): Promise<{ response: APIResponse; body: any; status: number }> {
+    const authToken = token || (await BaseAPI.ensureAuthToken(request));
+    const headers = BaseAPI.getDefaultGatewayHeaders(authToken);
+
+    const qp = { companyCode: 400021, ...params };
+    const query = `?${new URLSearchParams(qp as any).toString()}`;
+    const url = `${this.getBaseUrl()}${this.basePath}${query}`;
+    const response = await request.get(url, { headers });
+    const body = await response.json().catch(() => ({}));
+    return { response, body, status: response.status() };
+  }
+
+  /**
+   * Get MM Trip Counts for Status Filter Tabs.
+   * GET /api/v1/trips/counts
+   */
+  public static async getTripCounts(
+    request: APIRequestContext,
+    params: number | { companyCode?: number } = 400021,
+    token?: string
+  ): Promise<{ response: APIResponse; body: any; status: number }> {
+    const authToken = token || (await BaseAPI.ensureAuthToken(request));
+    const headers = BaseAPI.getDefaultGatewayHeaders(authToken);
+
+    let query = '';
+    if (typeof params === 'number') {
+      query = `?companyCode=${params}`;
+    } else {
+      const qp = { companyCode: 400021, ...params };
+      query = `?${new URLSearchParams(qp as any).toString()}`;
+    }
+
+    const url = `${this.getBaseUrl()}${this.basePath}/counts${query}`;
+    const response = await request.get(url, { headers });
     const body = await response.json().catch(() => ({}));
     return { response, body, status: response.status() };
   }

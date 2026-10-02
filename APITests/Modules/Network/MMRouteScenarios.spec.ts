@@ -4,27 +4,28 @@ import { MMTripAPI } from '../../../APIs/Modules/MM/MMTripAPI';
 import { BaseAPI } from '../../../APIs/Common/BaseAPI';
 import { pm } from '../../../Utils/VariableManager';
 
-
 async function attachApiLog(
   testInfo: any,
+  stepName: string,
   requestInfo: { method: string; endpoint: string; queryParams?: any; payload?: any },
   responseInfo: { status: number; body: any }
 ) {
-  await testInfo.attach('Request Details', {
-    body: JSON.stringify(requestInfo, null, 2),
-    contentType: 'application/json',
-  });
-  await testInfo.attach('API Response', {
-    body: JSON.stringify(responseInfo, null, 2),
+  await testInfo.attach(`API Log - ${stepName}`, {
+    body: JSON.stringify(
+      {
+        case: stepName,
+        request: requestInfo,
+        response: { statusCode: responseInfo.status, body: responseInfo.body },
+      },
+      null,
+      2
+    ),
     contentType: 'application/json',
   });
 }
 
-// Force serial execution within this suite to avoid database collision & lock contention on route state transitions
-test.describe.configure({ mode: 'serial' });
-
 // =================================================================================================
-// REUSABLE STATE SETUP HELPERS 
+// REUSABLE STATE SETUP HELPERS (Using VariableManager without hardcoded static values)
 // =================================================================================================
 
 let globalSeqCounter = 0;
@@ -42,20 +43,20 @@ async function createDraftRouteHelper(request: any, overrides: any = {}) {
   const payload = {
     companyCode: Number(pm.environment.get('companyCode')),
     routeCode: code,
-    routeType: String(pm.environment.get('routeType')),
+    routeType: String(pm.environment.get('expressRouteType')),
     routeNature: String(pm.environment.get('routeNature')),
     sourceBranch: String(pm.environment.get('sourceBranch')),
     destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    tatHoursSpeed: 18.0,
-    ratePerKm: 10.0,
-    routeCost: 1500.0,
+    distanceKm: Number(pm.environment.get('defaultDistanceKm')),
+    tatHoursRegular: Number(pm.environment.get('defaultTatHoursRegular')),
+    tatHoursSpeed: Number(pm.environment.get('defaultTatHoursSpeed')),
+    ratePerKm: Number(pm.environment.get('defaultRatePerKm')),
+    routeCost: Number(pm.environment.get('defaultRouteCost')),
     validFrom: String(pm.environment.get('validFrom')),
     validTo: String(pm.environment.get('validTo')),
     frequency: String(pm.environment.get('frequency')),
     runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
+    scheduleStartTimes: [String(pm.environment.get('defaultStartTime'))],
     createdBy: String(pm.environment.get('submitterActor')),
     ...overrides,
   };
@@ -90,1174 +91,859 @@ async function createActiveRouteHelper(request: any) {
   return { code, payload, submitter, approver };
 }
 
-test.beforeAll(async ({ playwright }) => {
-  const reqContext = await playwright.request.newContext();
-  await BaseAPI.ensureAuthToken(reqContext);
+test.describe('Network Service - Middle Mile Route Scenarios & Lifecycle Suite', () => {
 
-  // Initialize and ensure all static & runtime configuration variables are in pm.environment
-  pm.environment.set('companyCode', 400021);
-  pm.environment.set('sourceBranch', '1001');
-  pm.environment.set('destinationBranch', '2115');
-  pm.environment.set('intermediateBranch', '1002');
-  pm.environment.set('routeType', 'EXPRESS');
-  pm.environment.set('routeNature', 'PERMANENT');
-  pm.environment.set('frequency', 'DAILY');
-  pm.environment.set('validFrom', '2026-09-01');
-  pm.environment.set('validTo', '2027-09-01');
-  pm.environment.set('driverCode', '101');
-  pm.environment.set('driverName', 'Ramesh Kumar');
-  pm.environment.set('driverMobile', '9876543210');
-  pm.environment.set('vehicleType', '32FT');
-  pm.environment.set('vehicleCapacityKg', 10000);
-  pm.environment.set('vehicleOwnership', 'OWNED');
-  pm.environment.set('vendorCode', 'VEND-001');
-  pm.environment.set('priority', 'MEDIUM');
-  pm.environment.set('tripCreationSource', 'MANUAL');
+  test.beforeAll(async ({ playwright }) => {
+    const reqContext = await playwright.request.newContext();
+    await BaseAPI.ensureAuthToken(reqContext);
 
-  // Setup actor identities for Segregation of Duties (SoD: Maker != Checker)
-  const submitterActor = String(pm.environment.get('actor') || 'a1a1a1a1-0001-4000-8000-000000000001');
-  const approverActor = 'b2b2b2b2-0002-4000-8000-000000000002';
-  pm.environment.set('submitterActor', submitterActor);
-  pm.environment.set('approverActor', approverActor);
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const sourceBranch = String(pm.environment.get('sourceBranch'));
+    const destinationBranch = String(pm.environment.get('destinationBranch'));
 
-  // Dynamic resolution of an active route between source & destination
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const sourceBranch = String(pm.environment.get('sourceBranch'));
-  const destinationBranch = String(pm.environment.get('destinationBranch'));
-
-  const res = await RouteAPI.listRoutes(reqContext, { companyCode, status: 'ACTIVE', branch: sourceBranch });
-  let activeRouteCode = 'VJ-1001-2115-10';
-  if (res.status === 200 && Array.isArray(res.body?.data) && res.body.data.length > 0) {
-    const match = res.body.data.find(
-      (r: any) => r.sourceBranch === sourceBranch && r.destinationBranch === destinationBranch
-    );
-    if (match) {
-      activeRouteCode = match.routeCode;
+    const res = await RouteAPI.listRoutes(reqContext, { companyCode, status: 'ACTIVE', branch: sourceBranch });
+    let activeRouteCode = String(pm.environment.get('activeRouteCode'));
+    if (res.status === 200 && Array.isArray(res.body?.data) && res.body.data.length > 0) {
+      const match = res.body.data.find(
+        (r: any) => r.sourceBranch === sourceBranch && r.destinationBranch === destinationBranch
+      );
+      if (match) {
+        activeRouteCode = match.routeCode;
+      }
     }
-  }
 
-  // Store resolved active route in VariableManager for all test scenarios
-  pm.environment.set('routeCode', activeRouteCode);
-  pm.environment.set('activeRouteCode', activeRouteCode);
-});
-
-// =================================================================================================
-// PART 1: MIDDLE MILE ROUTE CONSUMPTION & OPERATIONAL GUARD-RAILS (SCENARIOS 1 TO 12)
-// =================================================================================================
-
-test('Part 1 - Scenario 1: Verify Active Direct Routes can be fetched for Source Branch and Tenant [Case #01]', async ({ request }, testInfo) => {
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const sourceBranch = String(pm.environment.get('sourceBranch'));
-
-  const queryParams = { companyCode, branch: sourceBranch, status: 'ACTIVE' };
-  const res = await RouteAPI.listRoutes(request, queryParams);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(Array.isArray(res.body.data)).toBe(true);
-  expect(res.body.data.length).toBeGreaterThan(0);
-
-  for (const route of res.body.data) {
-    expect(route.status).toBe('ACTIVE');
-    expect(route.routeCode).toBeDefined();
-  }
-});
-
-test('Part 1 - Scenario 2: Verify Routes can be filtered by Route Type (FEEDER vs EXPRESS vs SERVICE) [Case #02]', async ({ request }, testInfo) => {
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const targetType = 'EXPRESS';
-  pm.environment.set('filterRouteType', targetType);
-
-  const queryParams = { companyCode, status: 'ACTIVE', routeType: String(pm.environment.get('filterRouteType')) };
-  const res = await RouteAPI.listRoutes(request, queryParams);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(Array.isArray(res.body.data)).toBe(true);
-
-  if (res.body.data.length > 0) {
-    for (const route of res.body.data) {
-      expect(route.routeType).toBe(targetType);
-      expect(route.status).toBe('ACTIVE');
-    }
-  }
-});
-
-test('Part 1 - Scenario 3: Verify Route Details and TouchPoints structure for Multi-Stop / Direct Route [Case #03]', async ({ request }, testInfo) => {
-  const routeCode = String(pm.environment.get('routeCode') || 'VJ-1001-2115-10');
-  const res = await RouteAPI.getRouteDetail(request, routeCode);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}/${routeCode}` },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data).toBeDefined();
-  expect(res.body.data.route).toBeDefined();
-  expect(res.body.data.route.routeCode).toBe(routeCode);
-  expect(Array.isArray(res.body.data.touchPoints)).toBe(true);
-  expect(Array.isArray(res.body.data.scheduleRuns)).toBe(true);
-});
-
-test('Part 1 - Scenario 4: Verify Route Distance and SLA metrics required for MM Trip Stamping [Case #04]', async ({ request }, testInfo) => {
-  const routeCode = String(pm.environment.get('routeCode') || 'VJ-1001-2115-10');
-  const sourceBranch = String(pm.environment.get('sourceBranch'));
-
-  const res = await RouteAPI.getRouteDetail(request, routeCode);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}/${routeCode}` },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  const route = res.body?.data?.route;
-  expect(route).toBeDefined();
-  expect(Number(route.distanceKm)).toBeGreaterThan(0);
-  expect(route.validFrom).toBeDefined();
-  expect(route.validTo).toBeDefined();
-  expect(route.sourceBranch).toBe(sourceBranch);
-});
-
-test('Part 1 - Scenario 5: Negative - Verify MM rejects Trip creation when using Inactive / Draft Route [Case #05]', async ({ request }, testInfo) => {
-  const dummyVehicle = `DL01AB${Date.now().toString().slice(-4)}`;
-  const inactiveRoute = 'DRAFT_INACTIVE_ROUTE_TEST';
-
-  pm.environment.set('inactiveVehicleNo', dummyVehicle);
-  pm.environment.set('inactiveRouteCode', inactiveRoute);
-
-  const tripPayload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    routeType: String(pm.environment.get('routeType')),
-    routeCode: String(pm.environment.get('inactiveRouteCode')),
-    emptyTrip: false,
-    creationSource: String(pm.environment.get('tripCreationSource')),
-    vehicleNo: String(pm.environment.get('inactiveVehicleNo')),
-    vehicleType: String(pm.environment.get('vehicleType')),
-    vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
-    vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
-    vendorCode: String(pm.environment.get('vendorCode')),
-    gpsStatus: 'ACTIVE',
-    digitalLock: false,
-    priority: String(pm.environment.get('priority')),
-    driverCode: String(pm.environment.get('driverCode')),
-    driverName: String(pm.environment.get('driverName')),
-    driverMobile: String(pm.environment.get('driverMobile')),
-  };
-
-  const tripRes = await MMTripAPI.createTrip(request, tripPayload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${MMTripAPI.basePath}`, payload: tripPayload },
-    { status: tripRes.status, body: tripRes.body }
-  );
-
-  expect(tripRes.status).toBe(422);
-  expect(tripRes.body.errorCode).toBe('ROUTE_NOT_ACTIVE');
-  expect(tripRes.body.detail).toContain('is not an ACTIVE route');
-});
-
-test('Part 1 - Scenario 6: Negative - Verify MM rejects Trip creation for Non-Existent Route Code [Case #06]', async ({ request }, testInfo) => {
-  const dummyVehicle = `DL01AB${Date.now().toString().slice(-4)}`;
-  const nonExistentRoute = 'NON_EXISTENT_ROUTE_99999';
-
-  pm.environment.set('nonExistentVehicleNo', dummyVehicle);
-  pm.environment.set('nonExistentRouteCode', nonExistentRoute);
-
-  const tripPayload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    routeType: String(pm.environment.get('routeType')),
-    routeCode: String(pm.environment.get('nonExistentRouteCode')),
-    emptyTrip: false,
-    creationSource: String(pm.environment.get('tripCreationSource')),
-    vehicleNo: String(pm.environment.get('nonExistentVehicleNo')),
-    vehicleType: String(pm.environment.get('vehicleType')),
-    vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
-    vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
-    vendorCode: String(pm.environment.get('vendorCode')),
-    gpsStatus: 'ACTIVE',
-    digitalLock: false,
-    priority: String(pm.environment.get('priority')),
-    driverCode: String(pm.environment.get('driverCode')),
-    driverName: String(pm.environment.get('driverName')),
-    driverMobile: String(pm.environment.get('driverMobile')),
-  };
-
-  const tripRes = await MMTripAPI.createTrip(request, tripPayload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${MMTripAPI.basePath}`, payload: tripPayload },
-    { status: tripRes.status, body: tripRes.body }
-  );
-
-  expect(tripRes.status).toBe(422);
-  expect(tripRes.body.errorCode).toBe('ROUTE_NOT_ACTIVE');
-});
-
-test('Part 1 - Scenario 7: Negative - Verify Route Service returns 404 NOT_FOUND for unknown Route Code [Case #07]', async ({ request }, testInfo) => {
-  const invalidRoute = 'NON_EXISTENT_ROUTE_99999';
-  pm.environment.set('unknownRouteCode', invalidRoute);
-
-  const routeToQuery = String(pm.environment.get('unknownRouteCode'));
-  const res = await RouteAPI.getRouteDetail(request, routeToQuery);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}/${routeToQuery}` },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(404);
-  expect(res.body.errorCode).toBe('NOT_FOUND');
-  expect(res.body.detail).toContain(`route not found: ${routeToQuery}`);
-});
-
-test('Part 1 - Scenario 8: Negative - Verify Branch Mismatch Detection between Trip Destination and Route Destination [Case #08]', async ({ request }, testInfo) => {
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const sourceBranch = String(pm.environment.get('sourceBranch'));
-  const destinationBranch = String(pm.environment.get('destinationBranch'));
-
-  const queryParams = { companyCode, branch: sourceBranch, status: 'ACTIVE' };
-  const routesRes = await RouteAPI.listRoutes(request, queryParams);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
-    { status: routesRes.status, body: routesRes.body }
-  );
-
-  expect(routesRes.status).toBe(200);
-
-  const otherRoute = routesRes.body.data?.find(
-    (r: any) => r.sourceBranch === sourceBranch && r.destinationBranch !== destinationBranch
-  );
-
-  if (otherRoute) {
-    expect(otherRoute.destinationBranch).not.toBe(destinationBranch);
-    const matchesDesiredTrip = otherRoute.destinationBranch === destinationBranch;
-    expect(matchesDesiredTrip).toBe(false);
-  }
-});
-
-test('Part 1 - Scenario 9: Negative - Verify Tenant Isolation (Unknown Company Code returns empty route list) [Case #09]', async ({ request }, testInfo) => {
-  const invalidCompany = 99999999;
-  pm.environment.set('invalidCompanyCode', invalidCompany);
-
-  const queryParams = { companyCode: Number(pm.environment.get('invalidCompanyCode')), status: 'ACTIVE' };
-  const res = await RouteAPI.listRoutes(request, queryParams);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(Array.isArray(res.body.data)).toBe(true);
-  expect(res.body.data.length).toBe(0);
-});
-
-test('Part 1 - Scenario 10: Verify AUTO Route Nature metadata is returned for Concurrency Protection [Case #10]', async ({ request }, testInfo) => {
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const queryParams = { companyCode, status: 'ACTIVE' };
-  const res = await RouteAPI.listRoutes(request, queryParams);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.data.length).toBeGreaterThan(0);
-
-  for (const route of res.body.data) {
-    expect(route.routeNature).toBeDefined();
-    expect(['PERMANENT', 'AUTO', 'ADHOC']).toContain(route.routeNature);
-  }
-});
-
-test('Part 1 - Scenario 11: Business Rule - Verify MM rejects invalid Route Type values [allowed: FEEDER, SERVICE, EXPRESS] [Case #11]', async ({ request }, testInfo) => {
-  const dummyVehicle = `DL01AB${Date.now().toString().slice(-4)}`;
-  const invalidType = 'SUPER_FAST_EXPRESS_INVALID';
-
-  pm.environment.set('invalidRouteTypeVehicleNo', dummyVehicle);
-  pm.environment.set('invalidRouteType', invalidType);
-
-  const tripPayload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    routeType: String(pm.environment.get('invalidRouteType')),
-    routeCode: String(pm.environment.get('routeCode') || 'VJ-1001-2115-10'),
-    emptyTrip: false,
-    creationSource: String(pm.environment.get('tripCreationSource')),
-    vehicleNo: String(pm.environment.get('invalidRouteTypeVehicleNo')),
-    vehicleType: String(pm.environment.get('vehicleType')),
-    vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
-    vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
-    vendorCode: String(pm.environment.get('vendorCode')),
-    gpsStatus: 'ACTIVE',
-    digitalLock: false,
-    priority: String(pm.environment.get('priority')),
-    driverCode: String(pm.environment.get('driverCode')),
-    driverName: String(pm.environment.get('driverName')),
-    driverMobile: String(pm.environment.get('driverMobile')),
-  };
-
-  const tripRes = await MMTripAPI.createTrip(request, tripPayload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${MMTripAPI.basePath}`, payload: tripPayload },
-    { status: tripRes.status, body: tripRes.body }
-  );
-
-  expect(tripRes.status).toBe(422);
-  expect(tripRes.body.errorCode).toBe('ROUTE_TYPE_INVALID');
-  expect(tripRes.body.detail).toContain('route type must be one of [FEEDER, SERVICE, EXPRESS]');
-});
-
-test('Part 1 - Scenario 12: Verify Network Route Service Health and Response Time under MM SLA threshold [Case #12]', async ({ request }, testInfo) => {
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const startTime = Date.now();
-  const queryParams = { companyCode, status: 'ACTIVE' };
-  const res = await RouteAPI.listRoutes(request, queryParams);
-  const responseTimeMs = Date.now() - startTime;
-
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
-    { status: res.status, body: { ...res.body, responseTimeMs } }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(responseTimeMs).toBeLessThan(3000);
-});
-
-// =================================================================================================
-// PART 2: ROUTE LIFECYCLE & GOVERNANCE STATE MACHINE (SCENARIOS 1 TO 7)
-// =================================================================================================
-
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 1: (Create Route Draft) [Cases 1.1 to 1.9]
-// -------------------------------------------------------------------------------------------------
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.1: Create Valid Direct Express Route (201 Created, Status: DRAFT)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-EXP');
-  pm.environment.set('draftExpressRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('draftExpressRouteCode')),
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    tatHoursSpeed: 18.0,
-    ratePerKm: 10.0,
-    routeCost: 1500.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(201);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('DRAFT');
-  expect(res.body.data.routeId).toBeDefined();
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.2: Create Valid Service Route with Intermediate Touchpoints (201 Created)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-SRV');
-  pm.environment.set('draftServiceRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('draftServiceRouteCode')),
-    routeType: 'SERVICE',
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 250.0,
-    tatHoursRegular: 36.0,
-    tatHoursSpeed: 28.0,
-    ratePerKm: 12.0,
-    routeCost: 3000.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['06:00:00'],
-    touchPoints: [
-      {
-        branchCode: String(pm.environment.get('intermediateBranch')),
-        arrivalDay: 0,
-        arrivalTime: '12:00:00',
-        departureDay: 0,
-        departureTime: '13:00:00',
-      },
-    ],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(201);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('DRAFT');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.3: Negative - Duplicate Route Code (409 Conflict - ROUTE_CODE_EXISTS)', async ({ request }, testInfo) => {
-  const { code, payload } = await createDraftRouteHelper(request);
-  pm.environment.set('duplicateTestRouteCode', code);
-
-  const res = await RouteAPI.createRoute(request, { ...payload, routeCode: code });
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload: { ...payload, routeCode: code } },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(409);
-  expect(res.body.errorCode).toBe('ROUTE_CODE_EXISTS');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.4: Negative - Same Source & Destination Branch (422 - ROUTE_BRANCHES_SAME)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-SAME');
-  pm.environment.set('sameBranchTestRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('sameBranchTestRouteCode')),
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('sourceBranch')), // Deliberate same branch
-    distanceKm: 50.0,
-    tatHoursRegular: 12.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('ROUTE_BRANCHES_SAME');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.5: Negative - Express Route me Touchpoints attach karna (422 - TOUCH_POINTS_NOT_ALLOWED)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-EXPT');
-  pm.environment.set('expressTouchpointTestRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('expressTouchpointTestRouteCode')),
-    routeType: 'EXPRESS',
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
-    touchPoints: [
-      {
-        branchCode: String(pm.environment.get('intermediateBranch')),
-        arrivalDay: 0,
-        arrivalTime: '10:00:00',
-        departureDay: 0,
-        departureTime: '11:00:00',
-      },
-    ],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('TOUCH_POINTS_NOT_ALLOWED');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.6: Negative - Service Route bina Touchpoints ke create karna (422 - TOUCH_POINTS_REQUIRED)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-SRVN');
-  pm.environment.set('serviceWithoutTouchpointsTestRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('serviceWithoutTouchpointsTestRouteCode')),
-    routeType: 'SERVICE',
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
-    touchPoints: [],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('TOUCH_POINTS_REQUIRED');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.7: Negative - validTo <= validFrom Date order violation (422 - VALIDITY_ORDER)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-DATE');
-  pm.environment.set('invalidDateTestRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('invalidDateTestRouteCode')),
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    validFrom: '2027-01-01',
-    validTo: '2026-01-01', // Deliberate invalid order
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('VALIDITY_ORDER');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.8: Negative - runsPerDay out of bounds < 1 ya > 3 (422 - RUNS_PER_DAY_INVALID)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-RUNS');
-  pm.environment.set('invalidRunsTestRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('invalidRunsTestRouteCode')),
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 5, // Deliberate > 3
-    scheduleStartTimes: ['08:00:00'],
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('RUNS_PER_DAY_INVALID');
-});
-
-test('Part 2 - Scenario 1: (Create Route Draft) - Case 1.9: Negative - runsPerDay vs scheduleStartTimes count mismatch (422 - SCHEDULE_RUNS_MISMATCH)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-MIS');
-  pm.environment.set('mismatchRunsTestRouteCode', dynamicCode);
-
-  const payload = {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: String(pm.environment.get('mismatchRunsTestRouteCode')),
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 2,
-    scheduleStartTimes: ['08:00:00'], // Only 1 start time provided
-    createdBy: String(pm.environment.get('submitterActor')),
-  };
-
-  const res = await RouteAPI.createRoute(request, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('SCHEDULE_RUNS_MISMATCH');
-});
-
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 2: (Submit Route for Approval) [Cases 2.1 to 2.4]
-// -------------------------------------------------------------------------------------------------
-
-test('Part 2 - Scenario 2: (Submit Route for Approval) - Case 2.1: Submit DRAFT Route for Approval (200 OK, Status: PENDING)', async ({ request }, testInfo) => {
-  const { code } = await createDraftRouteHelper(request);
-  const submitterActor = String(pm.environment.get('submitterActor'));
-  const payload = { actor: submitterActor };
-
-  const res = await RouteAPI.submitRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/submit`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('PENDING');
-});
-
-test('Part 2 - Scenario 2: (Submit Route for Approval) - Case 2.2: Negative - Submit Non-Existent Route Code (404 Not Found - NOT_FOUND)', async ({ request }, testInfo) => {
-  const invalidCode = 'NON_EXISTENT_ROUTE_99999';
-  const payload = { actor: String(pm.environment.get('submitterActor')) };
-
-  const res = await RouteAPI.submitRoute(request, invalidCode, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${invalidCode}/submit`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(404);
-  expect(res.body.errorCode).toBe('NOT_FOUND');
-});
-
-test('Part 2 - Scenario 2: (Submit Route for Approval) - Case 2.3: Negative - Already PENDING ya ACTIVE route ko submit karna (409 Conflict - INVALID_STATUS_TRANSITION)', async ({ request }, testInfo) => {
-  const { code, submitter } = await createPendingRouteHelper(request);
-  const payload = { actor: submitter };
-
-  const res = await RouteAPI.submitRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/submit`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(409);
-  expect(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
-});
-
-test('Part 2 - Scenario 2: (Submit Route for Approval) - Case 2.4: Negative - Missing Submitter Actor Identity in Request (400 Bad Request - IDENTITY_REQUIRED)', async ({ request }, testInfo) => {
-  const { code } = await createDraftRouteHelper(request);
-  const payload = { actor: '' };
-
-  const res = await RouteAPI.submitRoute(request, code, payload as any);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/submit`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect([400, 422]).toContain(res.status);
-});
-
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 3: (Approve Route - Maker-Checker / SoD) [Cases 3.1 to 3.4]
-// -------------------------------------------------------------------------------------------------
-
-test('Part 2 - Scenario 3: (Approve Route - Maker-Checker / SoD) - Case 3.1: Approve PENDING Route by Independent Approver (200 OK, Status: CREATED)', async ({ request }, testInfo) => {
-  const { code } = await createPendingRouteHelper(request);
-  const approverActor = String(pm.environment.get('approverActor'));
-  const payload = { actor: approverActor };
-
-  const res = await RouteAPI.approveRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/approve`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('CREATED');
-});
-
-test('Part 2 - Scenario 3: (Approve Route - Maker-Checker / SoD) - Case 3.2: Negative - Segregation of Duties (SoD) Violation: Submitter khud apna route approve kare (422 - APPROVER_IS_MAKER)', async ({ request }, testInfo) => {
-  const { code, submitter } = await createPendingRouteHelper(request);
-
-  const approveRes = await RouteAPI.approveRoute(request, code, { actor: submitter });
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/approve`, payload: { actor: submitter } },
-    { status: approveRes.status, body: approveRes.body }
-  );
-
-  expect(approveRes.status).toBe(422);
-  expect(approveRes.body.errorCode).toBe('APPROVER_IS_MAKER');
-});
-
-test('Part 2 - Scenario 3: (Approve Route - Maker-Checker / SoD) - Case 3.3: Negative - DRAFT route ko bina submit kiye direct approve karna (409 Conflict - INVALID_STATUS_TRANSITION)', async ({ request }, testInfo) => {
-  const { code } = await createDraftRouteHelper(request);
-  const payload = { actor: String(pm.environment.get('approverActor')) };
-
-  const res = await RouteAPI.approveRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/approve`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(409);
-  expect(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
-});
-
-test('Part 2 - Scenario 3: (Approve Route - Maker-Checker / SoD) - Case 3.4: Negative - Non-Existent Route Code approve karna (404 Not Found - NOT_FOUND)', async ({ request }, testInfo) => {
-  const invalidCode = 'NON_EXISTENT_ROUTE_99999';
-  const payload = { actor: String(pm.environment.get('approverActor')) };
-
-  const res = await RouteAPI.approveRoute(request, invalidCode, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${invalidCode}/approve`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(404);
-  expect(res.body.errorCode).toBe('NOT_FOUND');
-});
-
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 4: (Reject Route Workflow) [Cases 4.1 to 4.4]
-// -------------------------------------------------------------------------------------------------
-
-test('Part 2 - Scenario 4: (Reject Route Workflow) - Case 4.1: Reject PENDING Route with valid rejection reason (200 OK, Status: REJECTED)', async ({ request }, testInfo) => {
-  const { code } = await createPendingRouteHelper(request);
-  const approver = String(pm.environment.get('approverActor'));
-
-  const payload = { reason: 'Incorrect commercial distance rate', actor: approver };
-  const res = await RouteAPI.rejectRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('REJECTED');
-});
-
-test('Part 2 - Scenario 4: (Reject Route Workflow) - Case 4.2: Negative - Reject without reason string (422 - REJECTION_REASON_REQUIRED)', async ({ request }, testInfo) => {
-  const { code } = await createPendingRouteHelper(request);
-  const approver = String(pm.environment.get('approverActor'));
-
-  const payload = { reason: '', actor: approver };
-  const res = await RouteAPI.rejectRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('REJECTION_REASON_REQUIRED');
-});
-
-test('Part 2 - Scenario 4: (Reject Route Workflow) - Case 4.3: Negative - Segregation of Duties (SoD) Violation: Submitter khud apna route reject kare (422 - APPROVER_IS_MAKER)', async ({ request }, testInfo) => {
-  const { code, submitter } = await createPendingRouteHelper(request);
-
-  const payload = { reason: 'Self rejection attempt', actor: submitter };
-  const res = await RouteAPI.rejectRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('APPROVER_IS_MAKER');
-});
-
-test('Part 2 - Scenario 4: (Reject Route Workflow) - Case 4.4: Negative - DRAFT ya ACTIVE status wale route ko reject karna (409 Conflict - INVALID_STATUS_TRANSITION)', async ({ request }, testInfo) => {
-  const { code } = await createDraftRouteHelper(request);
-  const payload = { reason: 'Rejecting draft', actor: String(pm.environment.get('approverActor')) };
-
-  const res = await RouteAPI.rejectRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(409);
-  expect(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
-});
-
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 5: (Activate Route - Go-Live) [Cases 5.1 to 5.5]
-// -------------------------------------------------------------------------------------------------
-
-test('Part 2 - Scenario 5: (Activate Route - Go-Live) - Case 5.1: Activate CREATED Route (200 OK, Status: ACTIVE)', async ({ request }, testInfo) => {
-  const { code, approver } = await createApprovedRouteHelper(request);
-  const payload = { actor: approver };
-
-  const res = await RouteAPI.activateRoute(request, code, payload);
-
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/activate`, payload },
-    { status: res.status, body: res.body }
-  );
-
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('ACTIVE');
-});
-
-test('Part 2 - Scenario 5: (Activate Route - Go-Live) - Case 5.2: Negative - Premature Activation with future validFrom date (422 - ACTIVATION_BEFORE_VALID_FROM)', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-FUT');
-  const submitter = String(pm.environment.get('submitterActor'));
-  const approver = String(pm.environment.get('approverActor'));
-
-  await RouteAPI.createRoute(request, {
-    companyCode: Number(pm.environment.get('companyCode')),
-    routeCode: dynamicCode,
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch: String(pm.environment.get('sourceBranch')),
-    destinationBranch: String(pm.environment.get('destinationBranch')),
-    distanceKm: 150.0,
-    tatHoursRegular: 24.0,
-    validFrom: '2099-01-01',
-    validTo: '2099-12-31',
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['08:00:00'],
-    createdBy: submitter,
+    pm.environment.set('routeCode', activeRouteCode);
+    pm.environment.set('activeRouteCode', activeRouteCode);
   });
 
-  await RouteAPI.submitRoute(request, dynamicCode, { actor: submitter });
-  await RouteAPI.approveRoute(request, dynamicCode, { actor: approver });
+  // =================================================================================================
+  // SCENARIO 1: MIDDLE MILE ROUTE CONSUMPTION & OPERATIONAL GUARD-RAILS (CASES 1 TO 12)
+  // =================================================================================================
 
-  const res = await RouteAPI.activateRoute(request, dynamicCode, { actor: approver });
+  test('Scenario 1: [Middle Mile Route Consumption & Operational Guard-Rails] Verify Active Route Lookup, Filtering, SLA Metrics, and MM Trip Guard-Rails (Cases 1 to 12)', async ({ request }, testInfo) => {
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const sourceBranch = String(pm.environment.get('sourceBranch'));
+    const destinationBranch = String(pm.environment.get('destinationBranch'));
+    const routeCode = String(pm.environment.get('routeCode'));
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${dynamicCode}/activate`, payload: { actor: approver } },
-    { status: res.status, body: res.body }
-  );
+    await test.step('Case 1: Verify Active Direct Routes can be fetched for Source Branch and Tenant', async () => {
+      const queryParams = { companyCode, branch: sourceBranch, status: 'ACTIVE' };
+      const res = await RouteAPI.listRoutes(request, queryParams);
 
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('ACTIVATION_BEFORE_VALID_FROM');
-});
+      await attachApiLog(
+        testInfo,
+        'Case 1: Fetch Active Direct Routes',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
+        { status: res.status, body: res.body }
+      );
 
-test('Part 2 - Scenario 5: (Activate Route - Go-Live) - Case 5.3: Negative - Duplicate Activation on already ACTIVE route (409 Conflict - INVALID_STATUS_TRANSITION)', async ({ request }, testInfo) => {
-  const { code, approver } = await createActiveRouteHelper(request);
-  const payload = { actor: approver };
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(Array.isArray(res.body.data)).toBe(true);
+      expect.soft(res.body.data.length).toBeGreaterThan(0);
 
-  const res = await RouteAPI.activateRoute(request, code, payload);
+      for (const route of res.body.data || []) {
+        expect.soft(route.status).toBe('ACTIVE');
+        expect.soft(route.routeCode).toBeDefined();
+      }
+    });
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/activate`, payload },
-    { status: res.status, body: res.body }
-  );
+    await test.step('Case 2: Verify Routes can be filtered by Route Type (FEEDER vs EXPRESS vs SERVICE)', async () => {
+      const targetType = String(pm.environment.get('filterRouteType'));
+      const queryParams = { companyCode, status: 'ACTIVE', routeType: targetType };
+      const res = await RouteAPI.listRoutes(request, queryParams);
 
-  expect(res.status).toBe(409);
-  expect(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
-});
+      await attachApiLog(
+        testInfo,
+        'Case 2: Filter Routes by Route Type',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
+        { status: res.status, body: res.body }
+      );
 
-test('Part 2 - Scenario 5: (Activate Route - Go-Live) - Case 5.4: Negative - DRAFT ya PENDING route ko bypass karke direct activate karna (409 Conflict - INVALID_STATUS_TRANSITION)', async ({ request }, testInfo) => {
-  const { code } = await createDraftRouteHelper(request);
-  const payload = { actor: String(pm.environment.get('approverActor')) };
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(Array.isArray(res.body.data)).toBe(true);
 
-  const res = await RouteAPI.activateRoute(request, code, payload);
+      for (const route of res.body.data || []) {
+        expect.soft(route.routeType).toBe(targetType);
+        expect.soft(route.status).toBe('ACTIVE');
+      }
+    });
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/activate`, payload },
-    { status: res.status, body: res.body }
-  );
+    await test.step('Case 3: Verify Route Details and TouchPoints structure for Multi-Stop / Direct Route', async () => {
+      const res = await RouteAPI.getRouteDetail(request, routeCode);
 
-  expect(res.status).toBe(409);
-  expect(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
-});
+      await attachApiLog(
+        testInfo,
+        'Case 3: Verify Route Details & TouchPoints Structure',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}/${routeCode}` },
+        { status: res.status, body: res.body }
+      );
 
-test('Part 2 - Scenario 5: (Activate Route - Go-Live) - Case 5.5: Negative - Activate Non-Existent Route Code (404 Not Found - NOT_FOUND)', async ({ request }, testInfo) => {
-  const invalidCode = 'NON_EXISTENT_ROUTE_99999';
-  const payload = { actor: String(pm.environment.get('approverActor')) };
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data?.route?.routeCode).toBe(routeCode);
+      expect.soft(Array.isArray(res.body.data?.touchPoints)).toBe(true);
+      expect.soft(Array.isArray(res.body.data?.scheduleRuns)).toBe(true);
+    });
 
-  const res = await RouteAPI.activateRoute(request, invalidCode, payload);
+    await test.step('Case 4: Verify Route Distance and SLA metrics required for MM Trip Stamping', async () => {
+      const res = await RouteAPI.getRouteDetail(request, routeCode);
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${invalidCode}/activate`, payload },
-    { status: res.status, body: res.body }
-  );
+      await attachApiLog(
+        testInfo,
+        'Case 4: Verify Route Distance & SLA Metrics',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}/${routeCode}` },
+        { status: res.status, body: res.body }
+      );
 
-  expect(res.status).toBe(404);
-  expect(res.body.errorCode).toBe('NOT_FOUND');
-});
+      expect.soft(res.status).toBe(200);
+      const route = res.body?.data?.route;
+      expect.soft(route).toBeDefined();
+      expect.soft(Number(route?.distanceKm)).toBeGreaterThan(0);
+      expect.soft(route?.validFrom).toBeDefined();
+      expect.soft(route?.validTo).toBeDefined();
+      expect.soft(route?.sourceBranch).toBe(sourceBranch);
+    });
 
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 6: (Route Renewal Staging) [Cases 6.1 to 6.5]
-// -------------------------------------------------------------------------------------------------
+    await test.step('Case 5: Negative - Verify MM rejects Trip creation when using Inactive / Draft Route', async () => {
+      const dummyVehicle = `DL01AB${Date.now().toString().slice(-4)}`;
+      const inactiveRoute = String(pm.environment.get('inactiveRouteCode'));
 
-test('Part 2 - Scenario 6: (Route Renewal Staging) - Case 6.1: Submit Renewal on ACTIVE route with valid rate/TAT changes (200 OK, Status: RENEWAL)', async ({ request }, testInfo) => {
-  const { code, submitter } = await createActiveRouteHelper(request);
-  const payload = {
-    changes: { ratePerKm: 12.5, tatHoursRegular: 22.0 },
-    actor: submitter,
-  };
+      const tripPayload = {
+        companyCode,
+        sourceBranch,
+        destinationBranch,
+        routeType: String(pm.environment.get('expressRouteType')),
+        routeCode: inactiveRoute,
+        emptyTrip: false,
+        creationSource: String(pm.environment.get('tripCreationSource')),
+        vehicleNo: dummyVehicle,
+        vehicleType: String(pm.environment.get('vehicleType')),
+        vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
+        vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
+        vendorCode: String(pm.environment.get('vendorCode')),
+        gpsStatus: String(pm.environment.get('gpsStatus')),
+        digitalLock: false,
+        priority: String(pm.environment.get('priority')),
+        driverCode: String(pm.environment.get('driverCode')),
+        driverName: String(pm.environment.get('driverName')),
+        driverMobile: String(pm.environment.get('driverMobile')),
+      };
 
-  const res = await RouteAPI.submitRenewal(request, code, payload);
+      const tripRes = await MMTripAPI.createTrip(request, tripPayload);
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal`, payload },
-    { status: res.status, body: res.body }
-  );
+      await attachApiLog(
+        testInfo,
+        'Case 5: Reject Trip Creation on Inactive Route',
+        { method: 'POST', endpoint: `${MMTripAPI.basePath}`, payload: tripPayload },
+        { status: tripRes.status, body: tripRes.body }
+      );
 
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('RENEWAL');
-});
+      expect.soft(tripRes.status).toBe(422);
+      expect.soft(tripRes.body.errorCode).toBe('ROUTE_NOT_ACTIVE');
+    });
 
-test('Part 2 - Scenario 6: (Route Renewal Staging) - Case 6.2: Negative - Renewal me non-renewable fields jaise sourceBranch badalna (422 - RENEWAL_FIELD_NOT_ALLOWED)', async ({ request }, testInfo) => {
-  const { code, submitter } = await createActiveRouteHelper(request);
-  const payload = {
-    changes: { sourceBranch: String(pm.environment.get('intermediateBranch')) },
-    actor: submitter,
-  };
+    await test.step('Case 6: Negative - Verify MM rejects Trip creation for Non-Existent Route Code', async () => {
+      const dummyVehicle = `DL01AB${Date.now().toString().slice(-4)}`;
+      const nonExistentRoute = String(pm.environment.get('nonExistentRouteCode'));
 
-  const res = await RouteAPI.submitRenewal(request, code, payload);
+      const tripPayload = {
+        companyCode,
+        sourceBranch,
+        destinationBranch,
+        routeType: String(pm.environment.get('expressRouteType')),
+        routeCode: nonExistentRoute,
+        emptyTrip: false,
+        creationSource: String(pm.environment.get('tripCreationSource')),
+        vehicleNo: dummyVehicle,
+        vehicleType: String(pm.environment.get('vehicleType')),
+        vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
+        vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
+        vendorCode: String(pm.environment.get('vendorCode')),
+        gpsStatus: String(pm.environment.get('gpsStatus')),
+        digitalLock: false,
+        priority: String(pm.environment.get('priority')),
+        driverCode: String(pm.environment.get('driverCode')),
+        driverName: String(pm.environment.get('driverName')),
+        driverMobile: String(pm.environment.get('driverMobile')),
+      };
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal`, payload },
-    { status: res.status, body: res.body }
-  );
+      const tripRes = await MMTripAPI.createTrip(request, tripPayload);
 
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('RENEWAL_FIELD_NOT_ALLOWED');
-});
+      await attachApiLog(
+        testInfo,
+        'Case 6: Reject Trip Creation for Non-Existent Route',
+        { method: 'POST', endpoint: `${MMTripAPI.basePath}`, payload: tripPayload },
+        { status: tripRes.status, body: tripRes.body }
+      );
 
-test('Part 2 - Scenario 6: (Route Renewal Staging) - Case 6.3: Negative - Submit Renewal without any changes map (422 - RENEWAL_CHANGES_REQUIRED)', async ({ request }, testInfo) => {
-  const { code, submitter } = await createActiveRouteHelper(request);
-  const payload = {
-    changes: {},
-    actor: submitter,
-  };
+      expect.soft(tripRes.status).toBe(422);
+      expect.soft(tripRes.body.errorCode).toBe('ROUTE_NOT_ACTIVE');
+    });
 
-  const res = await RouteAPI.submitRenewal(request, code, payload);
+    await test.step('Case 7: Negative - Verify Route Service returns 404 NOT_FOUND for unknown Route Code', async () => {
+      const routeToQuery = String(pm.environment.get('unknownRouteCode'));
+      const res = await RouteAPI.getRouteDetail(request, routeToQuery);
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal`, payload },
-    { status: res.status, body: res.body }
-  );
+      await attachApiLog(
+        testInfo,
+        'Case 7: 404 Not Found for Unknown Route Code',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}/${routeToQuery}` },
+        { status: res.status, body: res.body }
+      );
 
-  expect(res.status).toBe(422);
-  expect(res.body.errorCode).toBe('RENEWAL_CHANGES_REQUIRED');
-});
+      expect.soft(res.status).toBe(404);
+      expect.soft(res.body.errorCode).toBe('NOT_FOUND');
+    });
 
-test('Part 2 - Scenario 6: (Route Renewal Staging) - Case 6.4: Approve Renewal by Independent Manager (200 OK, Status: ACTIVE)', async ({ request }, testInfo) => {
-  const { code, submitter, approver } = await createActiveRouteHelper(request);
+    await test.step('Case 8: Negative - Verify Branch Mismatch Detection between Trip Destination and Route Destination', async () => {
+      const queryParams = { companyCode, branch: sourceBranch, status: 'ACTIVE' };
+      const routesRes = await RouteAPI.listRoutes(request, queryParams);
 
-  await RouteAPI.submitRenewal(request, code, {
-    changes: { ratePerKm: 14.0 },
-    actor: submitter,
+      await attachApiLog(
+        testInfo,
+        'Case 8: Branch Mismatch Detection',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
+        { status: routesRes.status, body: routesRes.body }
+      );
+
+      expect.soft(routesRes.status).toBe(200);
+      const otherRoute = routesRes.body.data?.find(
+        (r: any) => r.sourceBranch === sourceBranch && r.destinationBranch !== destinationBranch
+      );
+      if (otherRoute) {
+        expect.soft(otherRoute.destinationBranch).not.toBe(destinationBranch);
+      }
+    });
+
+    await test.step('Case 9: Negative - Verify Tenant Isolation (Unknown Company Code returns empty route list)', async () => {
+      const queryParams = { companyCode: Number(pm.environment.get('invalidCompanyCode')), status: 'ACTIVE' };
+      const res = await RouteAPI.listRoutes(request, queryParams);
+
+      await attachApiLog(
+        testInfo,
+        'Case 9: Tenant Isolation on Route List',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
+        { status: res.status, body: res.body }
+      );
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(Array.isArray(res.body.data)).toBe(true);
+      expect.soft(res.body.data.length).toBe(0);
+    });
+
+    await test.step('Case 10: Verify AUTO Route Nature metadata is returned for Concurrency Protection', async () => {
+      const queryParams = { companyCode, status: 'ACTIVE' };
+      const res = await RouteAPI.listRoutes(request, queryParams);
+
+      await attachApiLog(
+        testInfo,
+        'Case 10: Verify Route Nature Metadata',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
+        { status: res.status, body: res.body }
+      );
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.data.length).toBeGreaterThan(0);
+      for (const route of res.body.data || []) {
+        expect.soft(['PERMANENT', 'AUTO', 'ADHOC']).toContain(route.routeNature);
+      }
+    });
+
+    await test.step('Case 11: Business Rule - Verify MM rejects invalid Route Type values [allowed: FEEDER, SERVICE, EXPRESS]', async () => {
+      const dummyVehicle = `DL01AB${Date.now().toString().slice(-4)}`;
+      const tripPayload = {
+        companyCode,
+        sourceBranch,
+        destinationBranch,
+        routeType: String(pm.environment.get('invalidRouteType')),
+        routeCode,
+        emptyTrip: false,
+        creationSource: String(pm.environment.get('tripCreationSource')),
+        vehicleNo: dummyVehicle,
+        vehicleType: String(pm.environment.get('vehicleType')),
+        vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
+        vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
+        vendorCode: String(pm.environment.get('vendorCode')),
+        gpsStatus: String(pm.environment.get('gpsStatus')),
+        digitalLock: false,
+        priority: String(pm.environment.get('priority')),
+        driverCode: String(pm.environment.get('driverCode')),
+        driverName: String(pm.environment.get('driverName')),
+        driverMobile: String(pm.environment.get('driverMobile')),
+      };
+
+      const tripRes = await MMTripAPI.createTrip(request, tripPayload);
+
+      await attachApiLog(
+        testInfo,
+        'Case 11: Reject Invalid Route Type in MM Trip Creation',
+        { method: 'POST', endpoint: `${MMTripAPI.basePath}`, payload: tripPayload },
+        { status: tripRes.status, body: tripRes.body }
+      );
+
+      expect.soft(tripRes.status).toBe(422);
+      expect.soft(tripRes.body.errorCode).toBe('ROUTE_TYPE_INVALID');
+    });
+
+    await test.step('Case 12: Verify Network Route Service Health and Response Time under MM SLA threshold', async () => {
+      const startTime = Date.now();
+      const queryParams = { companyCode, status: 'ACTIVE' };
+      const res = await RouteAPI.listRoutes(request, queryParams);
+      const responseTimeMs = Date.now() - startTime;
+
+      await attachApiLog(
+        testInfo,
+        'Case 12: Route Service SLA Response Time',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}`, queryParams },
+        { status: res.status, body: { ...res.body, responseTimeMs } }
+      );
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(responseTimeMs).toBeLessThan(3000);
+    });
   });
 
-  const payload = { actor: approver };
-  const res = await RouteAPI.approveRenewal(request, code, payload);
+  // =================================================================================================
+  // SCENARIO 2: CREATE ROUTE DRAFT (CASES 1 TO 5 - POSITIVE EXPRESS, SERVICE, FEEDER & ADHOC)
+  // =================================================================================================
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal/approve`, payload },
-    { status: res.status, body: res.body }
-  );
+  test('Scenario 2: [Create Route Draft] Verify Positive Route Creation for EXPRESS, SERVICE, FEEDER (0 & 1+ TouchPoints), and ADHOC Route Nature (Cases 1 to 5)', async ({ request }, testInfo) => {
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const sourceBranch = String(pm.environment.get('sourceBranch'));
+    const destinationBranch = String(pm.environment.get('destinationBranch'));
+    const intermediateBranch = String(pm.environment.get('intermediateBranch'));
+    const validFrom = String(pm.environment.get('validFrom'));
+    const validTo = String(pm.environment.get('validTo'));
+    const frequency = String(pm.environment.get('frequency'));
+    const submitterActor = String(pm.environment.get('submitterActor'));
 
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.data.status).toBe('ACTIVE');
-});
+    await test.step('Case 1: Create Valid Direct EXPRESS Route (201 Created, Status: DRAFT)', async () => {
+      const dynamicCode = generateUniqueCode('RT-EXP');
+      pm.environment.set('draftExpressRouteCode', dynamicCode);
 
-test('Part 2 - Scenario 6: (Route Renewal Staging) - Case 6.5: Reject Renewal by Independent Manager (200 OK, Reverts to previous status)', async ({ request }, testInfo) => {
-  const { code, submitter, approver } = await createActiveRouteHelper(request);
+      const payload = {
+        companyCode,
+        routeCode: dynamicCode,
+        routeType: String(pm.environment.get('expressRouteType')),
+        routeNature: String(pm.environment.get('routeNature')),
+        sourceBranch,
+        destinationBranch,
+        distanceKm: Number(pm.environment.get('defaultDistanceKm')),
+        tatHoursRegular: Number(pm.environment.get('defaultTatHoursRegular')),
+        tatHoursSpeed: Number(pm.environment.get('defaultTatHoursSpeed')),
+        ratePerKm: Number(pm.environment.get('defaultRatePerKm')),
+        routeCost: Number(pm.environment.get('defaultRouteCost')),
+        validFrom,
+        validTo,
+        frequency,
+        runsPerDay: 1,
+        scheduleStartTimes: [String(pm.environment.get('defaultStartTime'))],
+        createdBy: submitterActor,
+      };
 
-  await RouteAPI.submitRenewal(request, code, {
-    changes: { ratePerKm: 18.0 },
-    actor: submitter,
+      const res = await RouteAPI.createRoute(request, payload);
+      await attachApiLog(testInfo, 'Case 1: Create Valid EXPRESS Route', { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(201);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('DRAFT');
+    });
+
+    await test.step('Case 2: Create Valid SERVICE Route with Intermediate Touchpoints (201 Created)', async () => {
+      const dynamicCode = generateUniqueCode('RT-SRV');
+      pm.environment.set('draftServiceRouteCode', dynamicCode);
+
+      const payload = {
+        companyCode,
+        routeCode: dynamicCode,
+        routeType: String(pm.environment.get('serviceRouteType')),
+        routeNature: String(pm.environment.get('routeNature')),
+        sourceBranch,
+        destinationBranch,
+        distanceKm: Number(pm.environment.get('defaultDistanceKm')),
+        tatHoursRegular: Number(pm.environment.get('defaultTatHoursRegular')),
+        tatHoursSpeed: Number(pm.environment.get('defaultTatHoursSpeed')),
+        ratePerKm: Number(pm.environment.get('defaultRatePerKm')),
+        routeCost: Number(pm.environment.get('defaultRouteCost')),
+        validFrom,
+        validTo,
+        frequency,
+        runsPerDay: 1,
+        scheduleStartTimes: [String(pm.environment.get('serviceStartTime'))],
+        touchPoints: [
+          {
+            branchCode: intermediateBranch,
+            arrivalDay: 0,
+            arrivalTime: String(pm.environment.get('touchPointArrivalTime')),
+            departureDay: 0,
+            departureTime: String(pm.environment.get('touchPointDepartureTime')),
+          },
+        ],
+        createdBy: submitterActor,
+      };
+
+      const res = await RouteAPI.createRoute(request, payload);
+      await attachApiLog(testInfo, 'Case 2: Create Valid SERVICE Route', { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(201);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('DRAFT');
+    });
+
+    await test.step('Case 3: Create Valid Direct FEEDER Route without Touchpoints (201 Created)', async () => {
+      const dynamicCode = generateUniqueCode('RT-FDR0');
+
+      const payload = {
+        companyCode,
+        routeCode: dynamicCode,
+        routeType: String(pm.environment.get('feederRouteType')),
+        routeNature: String(pm.environment.get('routeNature')),
+        sourceBranch,
+        destinationBranch,
+        distanceKm: Number(pm.environment.get('defaultDistanceKm')),
+        tatHoursRegular: Number(pm.environment.get('defaultTatHoursRegular')),
+        tatHoursSpeed: Number(pm.environment.get('defaultTatHoursSpeed')),
+        ratePerKm: Number(pm.environment.get('defaultRatePerKm')),
+        routeCost: Number(pm.environment.get('defaultRouteCost')),
+        validFrom,
+        validTo,
+        frequency,
+        runsPerDay: 1,
+        scheduleStartTimes: [String(pm.environment.get('defaultStartTime'))],
+        touchPoints: [],
+        createdBy: submitterActor,
+      };
+
+      const res = await RouteAPI.createRoute(request, payload);
+      await attachApiLog(testInfo, 'Case 3: Create Valid FEEDER Route (0 TouchPoints)', { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(201);
+      expect.soft(res.body.data.status).toBe('DRAFT');
+    });
+
+    await test.step('Case 4: Create Valid Multi-Stop FEEDER Route with Touchpoints (201 Created)', async () => {
+      const dynamicCode = generateUniqueCode('RT-FDR1');
+
+      const payload = {
+        companyCode,
+        routeCode: dynamicCode,
+        routeType: String(pm.environment.get('feederRouteType')),
+        routeNature: String(pm.environment.get('routeNature')),
+        sourceBranch,
+        destinationBranch,
+        distanceKm: Number(pm.environment.get('defaultDistanceKm')),
+        tatHoursRegular: Number(pm.environment.get('defaultTatHoursRegular')),
+        tatHoursSpeed: Number(pm.environment.get('defaultTatHoursSpeed')),
+        ratePerKm: Number(pm.environment.get('defaultRatePerKm')),
+        routeCost: Number(pm.environment.get('defaultRouteCost')),
+        validFrom,
+        validTo,
+        frequency,
+        runsPerDay: 1,
+        scheduleStartTimes: [String(pm.environment.get('defaultStartTime'))],
+        touchPoints: [
+          {
+            branchCode: intermediateBranch,
+            arrivalDay: 0,
+            arrivalTime: String(pm.environment.get('touchPointArrivalTime')),
+            departureDay: 0,
+            departureTime: String(pm.environment.get('touchPointDepartureTime')),
+          },
+        ],
+        createdBy: submitterActor,
+      };
+
+      const res = await RouteAPI.createRoute(request, payload);
+      await attachApiLog(testInfo, 'Case 4: Create Valid FEEDER Route (With TouchPoint)', { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(201);
+      expect.soft(res.body.data.status).toBe('DRAFT');
+    });
+
+    await test.step('Case 5: Create Valid ADHOC Route Nature Draft (201 Created)', async () => {
+      const dynamicCode = generateUniqueCode('RT-ADH');
+
+      const payload = {
+        companyCode,
+        routeCode: dynamicCode,
+        routeType: String(pm.environment.get('expressRouteType')),
+        routeNature: String(pm.environment.get('adhocRouteNature')),
+        sourceBranch,
+        destinationBranch,
+        distanceKm: Number(pm.environment.get('defaultDistanceKm')),
+        tatHoursRegular: Number(pm.environment.get('defaultTatHoursRegular')),
+        tatHoursSpeed: Number(pm.environment.get('defaultTatHoursSpeed')),
+        ratePerKm: Number(pm.environment.get('defaultRatePerKm')),
+        routeCost: Number(pm.environment.get('defaultRouteCost')),
+        validFrom,
+        validTo,
+        frequency,
+        runsPerDay: 1,
+        scheduleStartTimes: [String(pm.environment.get('defaultStartTime'))],
+        createdBy: submitterActor,
+      };
+
+      const res = await RouteAPI.createRoute(request, payload);
+      await attachApiLog(testInfo, 'Case 5: Create Valid ADHOC Route Draft', { method: 'POST', endpoint: `${RouteAPI.basePath}`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(201);
+      expect.soft(res.body.data.status).toBe('DRAFT');
+    });
   });
 
-  const payload = { reason: 'Rate too expensive', actor: approver };
-  const res = await RouteAPI.rejectRenewal(request, code, payload);
+  // =================================================================================================
+  // SCENARIO 3: SUBMIT ROUTE FOR APPROVAL (CASES 1 TO 4)
+  // =================================================================================================
 
-  await attachApiLog(
-    testInfo,
-    { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal/reject`, payload },
-    { status: res.status, body: res.body }
-  );
+  test('Scenario 3: [Submit Route for Approval] Verify Submit Workflow & State Transitions (Cases 1 to 4)', async ({ request }, testInfo) => {
+    const submitterActor = String(pm.environment.get('submitterActor'));
 
-  expect(res.status).toBe(200);
-  expect(res.body.status).toBe('SUCCESS');
-  expect(res.body.message).toContain('renewal rejected');
-});
+    await test.step('Case 1: Submit DRAFT Route for Approval (200 OK, Status: PENDING)', async () => {
+      const { code } = await createDraftRouteHelper(request);
+      const payload = { actor: submitterActor };
+      const res = await RouteAPI.submitRoute(request, code, payload);
 
-// -------------------------------------------------------------------------------------------------
-// SCENARIO 7: (Complete End-to-End Route Lifecycle) [Case 7.1]
-// -------------------------------------------------------------------------------------------------
+      await attachApiLog(testInfo, 'Case 1: Submit DRAFT Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/submit`, payload }, { status: res.status, body: res.body });
 
-test('Part 2 - Scenario 7: (Complete End-to-End Route Lifecycle) - Case 7.1: Full Golden Path - DRAFT -> SUBMIT -> APPROVE -> ACTIVATE -> Verify Visible in MM', async ({ request }, testInfo) => {
-  const dynamicCode = generateUniqueCode('RT-GOLD');
-  pm.environment.set('goldenRouteCode', dynamicCode);
-  const submitter = String(pm.environment.get('submitterActor'));
-  const approver = String(pm.environment.get('approverActor'));
-  const companyCode = Number(pm.environment.get('companyCode'));
-  const sourceBranch = String(pm.environment.get('sourceBranch'));
-  const destinationBranch = String(pm.environment.get('destinationBranch'));
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('PENDING');
+    });
 
-  // 1. Create Draft
-  const draftRes = await RouteAPI.createRoute(request, {
-    companyCode,
-    routeCode: dynamicCode,
-    routeType: String(pm.environment.get('routeType')),
-    routeNature: String(pm.environment.get('routeNature')),
-    sourceBranch,
-    destinationBranch,
-    distanceKm: 120.0,
-    tatHoursRegular: 18.0,
-    validFrom: String(pm.environment.get('validFrom')),
-    validTo: String(pm.environment.get('validTo')),
-    frequency: String(pm.environment.get('frequency')),
-    runsPerDay: 1,
-    scheduleStartTimes: ['09:00:00'],
-    createdBy: submitter,
-  });
-  expect(draftRes.status).toBe(201);
-  expect(draftRes.body.data.status).toBe('DRAFT');
+    await test.step('Case 2: Negative - Submit Non-Existent Route Code (404 Not Found - NOT_FOUND)', async () => {
+      const invalidCode = String(pm.environment.get('nonExistentRouteCode'));
+      const payload = { actor: submitterActor };
+      const res = await RouteAPI.submitRoute(request, invalidCode, payload);
 
-  // 2. Submit
-  const submitRes = await RouteAPI.submitRoute(request, dynamicCode, { actor: submitter });
-  expect(submitRes.status).toBe(200);
-  expect(submitRes.body.data.status).toBe('PENDING');
+      await attachApiLog(testInfo, 'Case 2: Submit Non-Existent Route Code', { method: 'POST', endpoint: `${RouteAPI.basePath}/${invalidCode}/submit`, payload }, { status: res.status, body: res.body });
 
-  // 3. Approve (SoD: Approver != Submitter)
-  const approveRes = await RouteAPI.approveRoute(request, dynamicCode, { actor: approver });
-  expect(approveRes.status).toBe(200);
-  expect(approveRes.body.data.status).toBe('CREATED');
+      expect.soft(res.status).toBe(404);
+      expect.soft(res.body.errorCode).toBe('NOT_FOUND');
+    });
 
-  // 4. Activate
-  const activateRes = await RouteAPI.activateRoute(request, dynamicCode, { actor: approver });
-  expect(activateRes.status).toBe(200);
-  expect(activateRes.body.data.status).toBe('ACTIVE');
+    await test.step('Case 3: Negative - Submit Already PENDING Route (409 Conflict - INVALID_STATUS_TRANSITION)', async () => {
+      const { code, submitter } = await createPendingRouteHelper(request);
+      const payload = { actor: submitter };
+      const res = await RouteAPI.submitRoute(request, code, payload);
 
-  // 5. Query MM Active Routes
-  const listRes = await RouteAPI.listRoutes(request, {
-    companyCode,
-    status: 'ACTIVE',
-    branch: sourceBranch,
+      await attachApiLog(testInfo, 'Case 3: Submit Already PENDING Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/submit`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(409);
+      expect.soft(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
+    });
+
+    await test.step('Case 4: Negative - Missing Submitter Actor Identity in Request (400 Bad Request)', async () => {
+      const { code } = await createDraftRouteHelper(request);
+      const payload = { actor: '' };
+      const res = await RouteAPI.submitRoute(request, code, payload as any);
+
+      await attachApiLog(testInfo, 'Case 4: Submit Without Actor Identity', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/submit`, payload }, { status: res.status, body: res.body });
+
+      expect.soft([400, 422]).toContain(res.status);
+    });
   });
 
-  await attachApiLog(
-    testInfo,
-    { method: 'GET', endpoint: `${RouteAPI.basePath}?companyCode=${companyCode}&status=ACTIVE&branch=${sourceBranch}` },
-    { status: listRes.status, body: listRes.body }
-  );
+  // =================================================================================================
+  // SCENARIO 4: APPROVE ROUTE - MAKER-CHECKER / SoD (CASES 1 TO 4)
+  // =================================================================================================
 
-  expect(listRes.status).toBe(200);
-  const found = listRes.body.data?.some((r: any) => r.routeCode === dynamicCode);
-  expect(found).toBe(true);
+  test('Scenario 4: [Approve Route - Maker-Checker / SoD] Verify Independent Approval & SoD Guard-Rails (Cases 1 to 4)', async ({ request }, testInfo) => {
+    const approverActor = String(pm.environment.get('approverActor'));
+
+    await test.step('Case 1: Approve PENDING Route by Independent Approver (200 OK, Status: CREATED)', async () => {
+      const { code } = await createPendingRouteHelper(request);
+      const payload = { actor: approverActor };
+      const res = await RouteAPI.approveRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 1: Approve PENDING Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/approve`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('CREATED');
+    });
+
+    await test.step('Case 2: Negative - Segregation of Duties (SoD) Violation: Submitter approves own route (422 - APPROVER_IS_MAKER)', async () => {
+      const { code, submitter } = await createPendingRouteHelper(request);
+      const payload = { actor: submitter };
+      const approveRes = await RouteAPI.approveRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 2: SoD Violation (Submitter Approves Own Route)', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/approve`, payload }, { status: approveRes.status, body: approveRes.body });
+
+      expect.soft(approveRes.status).toBe(422);
+      expect.soft(approveRes.body.errorCode).toBe('APPROVER_IS_MAKER');
+    });
+
+    await test.step('Case 3: Negative - Approve DRAFT Route directly without submitting (409 Conflict - INVALID_STATUS_TRANSITION)', async () => {
+      const { code } = await createDraftRouteHelper(request);
+      const payload = { actor: approverActor };
+      const res = await RouteAPI.approveRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 3: Approve Unsubmitted DRAFT Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/approve`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(409);
+      expect.soft(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
+    });
+
+    await test.step('Case 4: Negative - Approve Non-Existent Route Code (404 Not Found - NOT_FOUND)', async () => {
+      const invalidCode = String(pm.environment.get('nonExistentRouteCode'));
+      const payload = { actor: approverActor };
+      const res = await RouteAPI.approveRoute(request, invalidCode, payload);
+
+      await attachApiLog(testInfo, 'Case 4: Approve Non-Existent Route Code', { method: 'POST', endpoint: `${RouteAPI.basePath}/${invalidCode}/approve`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(404);
+      expect.soft(res.body.errorCode).toBe('NOT_FOUND');
+    });
+  });
+
+  // =================================================================================================
+  // SCENARIO 5: REJECT ROUTE WORKFLOW (CASES 1 TO 4)
+  // =================================================================================================
+
+  test('Scenario 5: [Reject Route Workflow] Verify Route Rejection & SoD Rules (Cases 1 to 4)', async ({ request }, testInfo) => {
+    const approver = String(pm.environment.get('approverActor'));
+
+    await test.step('Case 1: Reject PENDING Route with valid rejection reason (200 OK, Status: REJECTED)', async () => {
+      const { code } = await createPendingRouteHelper(request);
+      const payload = { reason: String(pm.environment.get('rejectionReason')), actor: approver };
+      const res = await RouteAPI.rejectRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 1: Reject PENDING Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('REJECTED');
+    });
+
+    await test.step('Case 2: Negative - Reject without reason string (422 - REJECTION_REASON_REQUIRED)', async () => {
+      const { code } = await createPendingRouteHelper(request);
+      const payload = { reason: '', actor: approver };
+      const res = await RouteAPI.rejectRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 2: Reject Without Reason String', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(422);
+      expect.soft(res.body.errorCode).toBe('REJECTION_REASON_REQUIRED');
+    });
+
+    await test.step('Case 3: Negative - Segregation of Duties (SoD) Violation: Submitter rejects own route (422 - APPROVER_IS_MAKER)', async () => {
+      const { code, submitter } = await createPendingRouteHelper(request);
+      const payload = { reason: String(pm.environment.get('rejectionReason')), actor: submitter };
+      const res = await RouteAPI.rejectRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 3: SoD Violation on Reject', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(422);
+      expect.soft(res.body.errorCode).toBe('APPROVER_IS_MAKER');
+    });
+
+    await test.step('Case 4: Negative - Reject DRAFT Route directly (409 Conflict - INVALID_STATUS_TRANSITION)', async () => {
+      const { code } = await createDraftRouteHelper(request);
+      const payload = { reason: String(pm.environment.get('rejectionReason')), actor: approver };
+      const res = await RouteAPI.rejectRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 4: Reject DRAFT Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/reject`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(409);
+      expect.soft(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
+    });
+  });
+
+  // =================================================================================================
+  // SCENARIO 6: ACTIVATE ROUTE - GO-LIVE (CASES 1 TO 5)
+  // =================================================================================================
+
+  test('Scenario 6: [Activate Route - Go-Live] Verify Route Activation & Effective Date Rules (Cases 1 to 5)', async ({ request }, testInfo) => {
+    const submitter = String(pm.environment.get('submitterActor'));
+    const approver = String(pm.environment.get('approverActor'));
+
+    await test.step('Case 1: Activate CREATED Route (200 OK, Status: ACTIVE)', async () => {
+      const { code } = await createApprovedRouteHelper(request);
+      const payload = { actor: approver };
+      const res = await RouteAPI.activateRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 1: Activate CREATED Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/activate`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('ACTIVE');
+    });
+
+    await test.step('Case 2: Negative - Premature Activation with future validFrom date (422 - ACTIVATION_BEFORE_VALID_FROM)', async () => {
+      const dynamicCode = generateUniqueCode('RT-FUT');
+      await createDraftRouteHelper(request, {
+        routeCode: dynamicCode,
+        validFrom: String(pm.environment.get('futureValidFrom')),
+        validTo: String(pm.environment.get('futureValidTo')),
+      });
+      await RouteAPI.submitRoute(request, dynamicCode, { actor: submitter });
+      await RouteAPI.approveRoute(request, dynamicCode, { actor: approver });
+
+      const payload = { actor: approver };
+      const res = await RouteAPI.activateRoute(request, dynamicCode, payload);
+
+      await attachApiLog(testInfo, 'Case 2: Premature Activation Before validFrom', { method: 'POST', endpoint: `${RouteAPI.basePath}/${dynamicCode}/activate`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(422);
+      expect.soft(res.body.errorCode).toBe('ACTIVATION_BEFORE_VALID_FROM');
+    });
+
+    await test.step('Case 3: Negative - Duplicate Activation on already ACTIVE route (409 Conflict - INVALID_STATUS_TRANSITION)', async () => {
+      const { code } = await createActiveRouteHelper(request);
+      const payload = { actor: approver };
+      const res = await RouteAPI.activateRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 3: Duplicate Activation on ACTIVE Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/activate`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(409);
+      expect.soft(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
+    });
+
+    await test.step('Case 4: Negative - Activate DRAFT route directly without approval (409 Conflict - INVALID_STATUS_TRANSITION)', async () => {
+      const { code } = await createDraftRouteHelper(request);
+      const payload = { actor: approver };
+      const res = await RouteAPI.activateRoute(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 4: Activate Unapproved DRAFT Route', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/activate`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(409);
+      expect.soft(res.body.errorCode).toBe('INVALID_STATUS_TRANSITION');
+    });
+
+    await test.step('Case 5: Negative - Activate Non-Existent Route Code (404 Not Found - NOT_FOUND)', async () => {
+      const invalidCode = String(pm.environment.get('nonExistentRouteCode'));
+      const payload = { actor: approver };
+      const res = await RouteAPI.activateRoute(request, invalidCode, payload);
+
+      await attachApiLog(testInfo, 'Case 5: Activate Non-Existent Route Code', { method: 'POST', endpoint: `${RouteAPI.basePath}/${invalidCode}/activate`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(404);
+      expect.soft(res.body.errorCode).toBe('NOT_FOUND');
+    });
+  });
+
+  // =================================================================================================
+  // SCENARIO 7: ROUTE RENEWAL STAGING (CASES 1 TO 5)
+  // =================================================================================================
+
+  test('Scenario 7: [Route Renewal Staging] Verify Active Route Renewal Submit, Approve & Reject (Cases 1 to 5)', async ({ request }, testInfo) => {
+    await test.step('Case 1: Submit Renewal on ACTIVE route with valid rate/TAT changes (200 OK, Status: RENEWAL)', async () => {
+      const { code, submitter } = await createActiveRouteHelper(request);
+      const payload = {
+        changes: { ratePerKm: 12.5, tatHoursRegular: 22.0 },
+        actor: submitter,
+      };
+      const res = await RouteAPI.submitRenewal(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 1: Submit Valid Route Renewal', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+      expect.soft(res.body.data.status).toBe('RENEWAL');
+    });
+
+    await test.step('Case 2: Negative - Modify non-renewable field sourceBranch in Renewal (422 - RENEWAL_FIELD_NOT_ALLOWED)', async () => {
+      const { code, submitter } = await createActiveRouteHelper(request);
+      const payload = {
+        changes: { sourceBranch: String(pm.environment.get('intermediateBranch')) },
+        actor: submitter,
+      };
+      const res = await RouteAPI.submitRenewal(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 2: Non-Renewable Field in Renewal', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(422);
+      expect.soft(res.body.errorCode).toBe('RENEWAL_FIELD_NOT_ALLOWED');
+    });
+
+    await test.step('Case 3: Negative - Submit Renewal without any changes map (422 - RENEWAL_CHANGES_REQUIRED)', async () => {
+      const { code, submitter } = await createActiveRouteHelper(request);
+      const payload = { changes: {}, actor: submitter };
+      const res = await RouteAPI.submitRenewal(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 3: Empty Changes Map in Renewal', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(422);
+      expect.soft(res.body.errorCode).toBe('RENEWAL_CHANGES_REQUIRED');
+    });
+
+    await test.step('Case 4: Approve Renewal by Independent Manager (200 OK, Status: ACTIVE)', async () => {
+      const { code, submitter, approver } = await createActiveRouteHelper(request);
+      await RouteAPI.submitRenewal(request, code, { changes: { ratePerKm: 14.0 }, actor: submitter });
+
+      const payload = { actor: approver };
+      const res = await RouteAPI.approveRenewal(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 4: Approve Route Renewal', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal/approve`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.data.status).toBe('ACTIVE');
+    });
+
+    await test.step('Case 5: Reject Renewal by Independent Manager (200 OK, Reverts to previous status)', async () => {
+      const { code, submitter, approver } = await createActiveRouteHelper(request);
+      await RouteAPI.submitRenewal(request, code, { changes: { ratePerKm: 18.0 }, actor: submitter });
+
+      const payload = { reason: String(pm.environment.get('renewalRejectionReason')), actor: approver };
+      const res = await RouteAPI.rejectRenewal(request, code, payload);
+
+      await attachApiLog(testInfo, 'Case 5: Reject Route Renewal', { method: 'POST', endpoint: `${RouteAPI.basePath}/${code}/renewal/reject`, payload }, { status: res.status, body: res.body });
+
+      expect.soft(res.status).toBe(200);
+      expect.soft(res.body.status).toBe('SUCCESS');
+    });
+  });
+
+  // =================================================================================================
+  // SCENARIO 8: COMPLETE END-TO-END ROUTE LIFECYCLE (CASE 1)
+  // =================================================================================================
+
+  test('Scenario 8: [Complete End-to-End Route Lifecycle] Full Golden Path - DRAFT -> SUBMIT -> APPROVE -> ACTIVATE -> Verify Visible in MM (Case 1)', async ({ request }, testInfo) => {
+    await test.step('Case 1: Execute Full Route Lifecycle (Create Draft -> Submit -> Approve -> Activate -> List in MM Active Routes)', async () => {
+      const dynamicCode = generateUniqueCode('RT-GOLD');
+      pm.environment.set('goldenRouteCode', dynamicCode);
+      const submitter = String(pm.environment.get('submitterActor'));
+      const approver = String(pm.environment.get('approverActor'));
+      const companyCode = Number(pm.environment.get('companyCode'));
+      const sourceBranch = String(pm.environment.get('sourceBranch'));
+
+      const { res: draftRes } = await createDraftRouteHelper(request, { routeCode: dynamicCode });
+      expect.soft(draftRes.status).toBe(201);
+      expect.soft(draftRes.body.data.status).toBe('DRAFT');
+
+      const submitRes = await RouteAPI.submitRoute(request, dynamicCode, { actor: submitter });
+      expect.soft(submitRes.status).toBe(200);
+      expect.soft(submitRes.body.data.status).toBe('PENDING');
+
+      const approveRes = await RouteAPI.approveRoute(request, dynamicCode, { actor: approver });
+      expect.soft(approveRes.status).toBe(200);
+      expect.soft(approveRes.body.data.status).toBe('CREATED');
+
+      const activateRes = await RouteAPI.activateRoute(request, dynamicCode, { actor: approver });
+      expect.soft(activateRes.status).toBe(200);
+      expect.soft(activateRes.body.data.status).toBe('ACTIVE');
+
+      const listRes = await RouteAPI.listRoutes(request, {
+        companyCode,
+        status: 'ACTIVE',
+        branch: sourceBranch,
+      });
+
+      await attachApiLog(
+        testInfo,
+        'Case 1: Verify Activated Route Visible in MM Active List',
+        { method: 'GET', endpoint: `${RouteAPI.basePath}?companyCode=${companyCode}&status=ACTIVE&branch=${sourceBranch}` },
+        { status: listRes.status, body: listRes.body }
+      );
+
+      expect.soft(listRes.status).toBe(200);
+      const found = listRes.body.data?.some((r: any) => r.routeCode === dynamicCode);
+      expect.soft(found).toBe(true);
+    });
+  });
+
 });

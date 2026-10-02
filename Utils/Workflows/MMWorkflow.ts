@@ -15,12 +15,13 @@ export interface MMWorkflowResult {
   boxCode: string;
   sealNo: string;
   scanEventId: string;
+  destinationBranch?: string;
 }
 
 /**
  * Reusable Middle Mile (MM) Workflow Helper.
  * Executes the complete 10-step process from Docket creation to Destination Unload & Trip Completion.
- * Can be reused across test suites (e.g. ValidMMTrip, ValidLMTrip) with zero code duplication.
+ * Can be reused across test suites (e.g. SmokeTesting, PositiveMMTripScenario, ValidLMTrip) with zero code duplication.
  */
 export class MMWorkflow {
   public static async executeCompleteMMFlow(request: APIRequestContext): Promise<MMWorkflowResult> {
@@ -219,13 +220,8 @@ export class MMWorkflow {
     // =========================================================================
     // STEP 4: GENERATE MANIFESTS & ADD DOCKET
     // =========================================================================
-    console.log('\n--- [Step 4] Generating Manifests & Adding Docket to Trip ---');
-    await MMTripAPI.assignDock(request, tripNo, {
-      branchCode: sourceBranch,
-      dockNo: 'DOCK-1',
-      purpose: 'LOADING',
-      actor,
-    }).catch(() => {});
+    console.log('\n--- [Step 4] Assigning Dock, Generating Manifests & Adding Docket to Trip ---');
+    await MMWorkflow.ensureDockAssigned(request, tripNo, sourceBranch, actor, companyCode);
 
     await ManifestAPI.generateManifests(request, tripNo, actor).catch(() => {});
 
@@ -302,9 +298,16 @@ export class MMWorkflow {
     console.log(`✅ [Step 6 Passed] Outbound Scan Recorded! Scan Event ID: "${scanEventId}"`);
 
     // =========================================================================
-    // STEP 7: BOX LOADING & LOADING CLOSE
+    // STEP 7: DOCUMENT SCAN, BOX LOADING, LOADING CLOSE & DOCUMENT POUCH
     // =========================================================================
-    console.log('\n--- [Step 7] Loading Box into Manifest & Closing Loading ---');
+    console.log('\n--- [Step 7] Scanning Document, Loading Box, Closing Loading & Pouching Document ---');
+    const docScanRes = await ManifestAPI.scanTripDocketDocument(request, tripNo, {
+      docketNo,
+      companyCode,
+      actor,
+    });
+    expect(docScanRes.status).toBe(200);
+
     const loadBoxRes = await ManifestAPI.loadBox(request, manifestNo, {
       docketNo,
       boxCode,
@@ -325,6 +328,13 @@ export class MMWorkflow {
     expect([200, 201]).toContain(closeLoadRes.status);
     console.log(`✅ [Step 7 Passed] Loading Closed for Manifest "${manifestNo}"`);
 
+    const docPouchRes = await ManifestAPI.pouchTripDocketDocument(request, tripNo, {
+      docketNo,
+      companyCode,
+      actor,
+    });
+    expect(docPouchRes.status).toBe(200);
+
     // =========================================================================
     // STEP 8: SEAL TRIP, DISPATCH READY & GATE-OUT (ORIGIN: 1001)
     // =========================================================================
@@ -344,6 +354,11 @@ export class MMWorkflow {
     await MMTripAPI.dispatchReady(request, tripNo, {
       commodityClass: 'GENERAL',
       checklist: {
+        vehicleTypeOk: true,
+        tarpaulinOk: true,
+        lashingOk: true,
+        gpsOk: true,
+        digitalLockOk: true,
         tyreConditionOk: true,
         documentsVerified: true,
       },
@@ -462,6 +477,7 @@ export class MMWorkflow {
       boxCode,
       sealNo,
       scanEventId,
+      destinationBranch,
     };
   }
 
@@ -505,4 +521,756 @@ export class MMWorkflow {
       console.warn(`⚠️ [Pre-Execution Check Warning] Could not verify movable pool: ${err.message}`);
     }
   }
+
+  /**
+   * Ensures a dock is assigned to a trip at a branch, automatically resolving occupied conflicts
+   * by finding and cancelling orphan trips holding the dock.
+   */
+  public static async ensureDockAssigned(
+    request: APIRequestContext,
+    tripNo: string,
+    branchCode: string,
+    actor: string,
+    companyCode: number,
+    purpose: string = 'LOADING'
+  ): Promise<boolean> {
+    let dockCandidates: string[] = [];
+    try {
+      const networkUrl = 'http://10.10.130.123:30085';
+      const res = await request.get(`${networkUrl}/api/v1/branch-resources?branch=${branchCode}&companyCode=${companyCode}`, {
+        headers: { companyCode: String(companyCode), 'x-company-code': String(companyCode) }
+      });
+      const data = await res.json().catch(() => ({}));
+      const items = data?.data || [];
+      const branchDocks = items.filter((r: any) => r.resourceType === 'DOCK').map((r: any) => r.resourceCode);
+      if (branchDocks.length > 0) {
+        dockCandidates = branchDocks;
+      }
+    } catch {}
+
+    if (dockCandidates.length === 0) {
+      dockCandidates = ['DOCK-1', 'DOCK-2', 'D1'];
+    }
+
+    for (const dockCandidate of dockCandidates) {
+      let dockRes = await MMTripAPI.assignDock(request, tripNo, {
+        branchCode,
+        dockNo: dockCandidate,
+        purpose,
+        actor,
+        companyCode,
+      }).catch(() => null);
+
+      if (dockRes && [200, 201].includes(dockRes.status)) {
+        console.log(`✅ Dock "${dockCandidate}" assigned to Trip "${tripNo}" at ${branchCode}`);
+        return true;
+      }
+
+      if (dockRes?.status === 409) {
+        // Try extracting trip from error message
+        let orphanTripNo = String(dockRes.body?.detail || '').match(/TRIP-[A-Z0-9-]+/)?.[0];
+
+        // If not in error detail, query active trips holding this dock or yard docks
+        if (!orphanTripNo || orphanTripNo === tripNo) {
+          const ydRes = await MMTripAPI.getYardDocks(request, branchCode, companyCode).catch(() => null);
+          const ydItems = ydRes?.body?.data || [];
+          if (Array.isArray(ydItems)) {
+            const dockItem = ydItems.find((d: any) => (d.dockNo === dockCandidate || d.dock_no === dockCandidate || d.dockCode === dockCandidate));
+            if (dockItem) {
+              const occ = dockItem.tripNo || dockItem.trip_no || dockItem.currentTripNo || dockItem.occupiedByTripNo;
+              if (occ && occ !== tripNo) {
+                orphanTripNo = occ;
+              }
+            }
+          }
+        }
+
+        if (!orphanTripNo || orphanTripNo === tripNo) {
+          const yardDocksRes = await ManifestAPI.getYardDockManagementDocks(request, { branch: branchCode, companyCode }).catch(() => null);
+          const yardItems = yardDocksRes?.body?.data?.docks?.items || yardDocksRes?.body?.data?.items || yardDocksRes?.body?.data || [];
+          if (Array.isArray(yardItems)) {
+            const dockItem = yardItems.find((d: any) => (d.dockNo === dockCandidate || d.dock_no === dockCandidate || d.dockCode === dockCandidate));
+            if (dockItem) {
+              const occ = dockItem.tripNo || dockItem.trip_no || dockItem.currentTripNo || dockItem.occupiedByTripNo;
+              if (occ && occ !== tripNo) {
+                orphanTripNo = occ;
+              }
+            }
+          }
+
+          if (!orphanTripNo || orphanTripNo === tripNo) {
+            const tripsListRes = await MMTripAPI.listTrips(request, { companyCode, branch: branchCode, size: 50 }).catch(() => null);
+            const occupant = (tripsListRes?.body?.data?.items || []).find(
+              (t: any) => (t.currentDockNo === dockCandidate || t.current_dock_no === dockCandidate) && t.tripNo !== tripNo
+            );
+            if (occupant?.tripNo) {
+              orphanTripNo = occupant.tripNo;
+            }
+          }
+        }
+
+        if (orphanTripNo && orphanTripNo !== tripNo) {
+          console.log(`⚠️ Dock "${dockCandidate}" occupied by "${orphanTripNo}". Self-healing by releasing and cancelling orphan trip...`);
+          const mmUrl = BaseAPI.getServiceUrl('mm');
+          const tok = await BaseAPI.ensureAuthToken(request);
+          const h = {
+            ...BaseAPI.getDefaultGatewayHeaders(tok),
+            companyCode: String(companyCode),
+            'x-company-code': String(companyCode),
+          };
+          await request.post(`${mmUrl}/api/v1/docks/trips/${orphanTripNo}/release`, { data: { actor, companyCode }, headers: h }).catch(() => {});
+          await request.delete(`${mmUrl}/api/v1/docks/trips/${orphanTripNo}/queue`, { data: { actor, companyCode }, headers: h }).catch(() => {});
+          await MMTripAPI.cancelTrip(request, orphanTripNo, {
+            reason: `Cleanup orphaned trip holding ${dockCandidate}`,
+            actor,
+            companyCode,
+          }).catch(() => {});
+          await request.post(`${mmUrl}/api/v1/docks/trips/${orphanTripNo}/release`, { data: { actor, companyCode }, headers: h }).catch(() => {});
+          await request.delete(`${mmUrl}/api/v1/docks/trips/${orphanTripNo}/queue`, { data: { actor, companyCode }, headers: h }).catch(() => {});
+
+          const retryRes = await MMTripAPI.assignDock(request, tripNo, {
+            branchCode,
+            dockNo: dockCandidate,
+            purpose,
+            actor,
+            companyCode,
+          }).catch(() => null);
+
+          if (retryRes && [200, 201].includes(retryRes.status)) {
+            console.log(`✅ Dock "${dockCandidate}" assigned to Trip "${tripNo}" after orphan cleanup`);
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Reusable helper to create a Docket in Booking and wait until it reaches MM's movable pool.
+   */
+  public static async createDocketAndWaitForMovablePool(
+    request: APIRequestContext,
+    originBranch: string,
+    destBranch: string,
+    tag: string,
+    boxesCount = 1
+  ): Promise<string> {
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const actor = String(pm.environment.get('actor'));
+    const mmBaseUrl = BaseAPI.getServiceUrl('mm');
+    const token = await BaseAPI.ensureAuthToken(request);
+    const headers = BaseAPI.getDefaultGatewayHeaders(token);
+
+    const docketPayload = {
+      companyCode,
+      companyId: String(pm.environment.get('companyId')),
+      bookingBranch: originBranch,
+      billingPartyCode: String(pm.environment.get('billingPartyCode')),
+      customerCode: String(pm.environment.get('customerCode')),
+      customerType: String(pm.environment.get('customerType')),
+      sourceBranch: originBranch,
+      destinationBranch: destBranch,
+      deliveryAddressId: Number(pm.environment.get('deliveryAddressId')),
+      pickupLocationId: Number(pm.environment.get('pickupLocationId')),
+      pickupPincode: String(pm.environment.get('pickupPincode')),
+      deliveryPincode: String(pm.environment.get('deliveryPincode')),
+      consignorPincode: String(pm.environment.get('consignorPincode')),
+      transportMode: String(pm.environment.get('transportMode')),
+      loadType: String(pm.environment.get('loadType')),
+      freightMode: String(pm.environment.get('freightMode')),
+      docketSource: String(pm.environment.get('docketSource')),
+      createdBy: actor,
+      isReturn: false,
+      originalDocketNo: '',
+      invoices: [
+        {
+          invoiceNo: `INV-WF-${tag}`,
+          invoiceDate: String(pm.environment.get('invoiceDate')),
+          grossValue: Number(pm.environment.get('grossValue')),
+          netValue: Number(pm.environment.get('netValue')),
+          poNumber: `PO-WF-${tag}`,
+          goodsDescription: 'Middle Mile Reusable Workflow Cargo',
+          ewayBillNo: Number(pm.environment.get('ewayBillNo')),
+          consignorCode: String(pm.environment.get('consignorCode')),
+          consignorGstin: String(pm.environment.get('consignorGstin')),
+          consigneeCode: String(pm.environment.get('consigneeCode')),
+          consigneeGstin: String(pm.environment.get('consigneeGstin')),
+          boxes: [
+            {
+              boxCount: boxesCount,
+              type: 'CARTON',
+              quantity: boxesCount,
+              length: 30,
+              width: 20,
+              height: 15,
+              unit: 'CM',
+              actualWeight: 10.0 * boxesCount,
+            },
+          ],
+        },
+      ],
+      attachments: [],
+    };
+
+    const created = await DocketAPI.createDocket(request, docketPayload);
+    expect([200, 201]).toContain(created.status);
+    const docNo = created.body?.data?.docketNo || created.docketNo!;
+
+    for (let attempt = 1; attempt <= 15; attempt++) {
+      const mvRes = await request.get(
+        `${mmBaseUrl}/api/v1/mm/branches/${originBranch}/movable-dockets?companyCode=${companyCode}&destinationBranches=${destBranch}&page=1&size=100`,
+        { headers }
+      );
+      const mvBody = await mvRes.json().catch(() => ({}));
+      const items = mvBody?.data?.items || [];
+      if (items.some((d: any) => (d.docket_no || d.docketNo) === docNo)) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+    return docNo;
+  }
+
+  /**
+   * Reusable helper to print barcode stickers and record PICKUP_SCAN + OUT_SCAN (LOAD) at the given branch.
+   */
+  public static async printAndScanBoxForLoad(
+    request: APIRequestContext,
+    docketNo: string,
+    branchCode: string
+  ): Promise<{ boxCode: string; loadScanId: string }> {
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const actor = String(pm.environment.get('actor'));
+
+    let prtRes: any;
+    for (let attempt = 1; attempt <= 8; attempt++) {
+      prtRes = await ScanningAPI.printBatch(request, {
+        docketNo,
+        count: 1,
+        actor,
+        companyCode,
+        branchCode,
+        printType: 'POST_MANIFEST',
+      });
+      if ([200, 201].includes(prtRes.status)) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    expect([200, 201]).toContain(prtRes.status);
+    const boxCode = prtRes.body?.data?.boxCodes?.[0] || `${docketNo}-B1`;
+
+    await ScanningAPI.recordScan(request, {
+      boxCode,
+      eventType: 'PICKUP_SCAN',
+      scanStage: 'BOOKING',
+      branchCode,
+      scannedBy: actor,
+      deviceId: `DEV-${branchCode}-01`,
+      companyCode,
+      expectedDocketNo: docketNo,
+    });
+    const outScanRes = await ScanningAPI.recordScan(request, {
+      boxCode,
+      eventType: 'OUT_SCAN',
+      scanStage: 'LOAD',
+      branchCode,
+      scannedBy: actor,
+      deviceId: `DEV-${branchCode}-01`,
+      companyCode,
+      expectedDocketNo: docketNo,
+    });
+    expect([200, 201]).toContain(outScanRes.status);
+    const loadScanId = outScanRes.body?.data?.publicEventId || outScanRes.body?.data?.id;
+    return { boxCode, loadScanId };
+  }
+
+  /**
+   * Reusable helper to create a Middle Mile trip and transition it to any target status
+   * ('CREATED' | 'CANCELLED' | 'READY_FOR_DISPATCH' | 'GATE_OUT_IN_TRANSIT' | 'GATE_IN' | 'COMPLETED').
+   * Can be reused in Smoke, Positive Listing/Status Filter tests, or downstream LM/FM modules.
+   */
+  public static async createTripInStatus(
+    request: APIRequestContext,
+    targetStatus: 'CREATED' | 'CANCELLED' | 'READY_FOR_DISPATCH' | 'GATE_OUT_IN_TRANSIT' | 'GATE_IN' | 'COMPLETED'
+  ): Promise<{ tripNo: string; vehicleNo: string; sealNo: string; status: string }> {
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const sourceBranch = String(pm.environment.get('sourceBranch'));
+    const destinationBranch = String(pm.environment.get('destinationBranch'));
+    const actor = String(pm.environment.get('actor'));
+    const timeSuffix = `${Date.now()}`.slice(-5);
+    const vehicleNo = `DL01ST${timeSuffix}`;
+    const sealNo = `SEAL-ST-${timeSuffix}`;
+
+    const isEmpty = targetStatus !== 'CREATED' && targetStatus !== 'CANCELLED';
+    const createPayload = {
+      companyCode,
+      sourceBranch,
+      destinationBranch,
+      branchCode: sourceBranch,
+      routeCode: isEmpty ? null : String(pm.environment.get('routeCode')),
+      routeType: String(pm.environment.get('expressRouteType')),
+      scheduleCode: String(pm.environment.get('scheduleCode')),
+      tripDate: new Date().toISOString().split('T')[0],
+      emptyTrip: isEmpty,
+      creationSource: isEmpty ? 'EMPTY_AUTO' : 'MANUAL',
+      vehicleNo,
+      vehicleType: String(pm.environment.get('vehicleType')),
+      vehicleCapacityKg: Number(pm.environment.get('vehicleCapacityKg')),
+      vehicleOwnership: String(pm.environment.get('vehicleOwnership')),
+      transportMode: String(pm.environment.get('transportMode')),
+      vendorCode: String(pm.environment.get('vendorCode')),
+      gpsStatus: String(pm.environment.get('gpsStatus')),
+      digitalLock: false,
+      priority: String(pm.environment.get('priority')),
+      driverCode: Number(pm.environment.get('planDriverCode')),
+      driverName: String(pm.environment.get('driverName')),
+      driverMobile: String(pm.environment.get('driverMobile')),
+      createdBy: actor,
+    };
+
+    const createRes = await MMTripAPI.createTrip(request, createPayload);
+    expect([200, 201]).toContain(createRes.status);
+    const tripNo = createRes.body?.data?.tripNo;
+    expect(tripNo).toBeTruthy();
+
+    if (targetStatus === 'CREATED') {
+      return { tripNo, vehicleNo, sealNo, status: 'CREATED' };
+    }
+
+    if (targetStatus === 'CANCELLED') {
+      const cancelRes = await MMTripAPI.cancelTrip(request, tripNo, {
+        reason: 'Automated test cancellation for status verification',
+        actor,
+      });
+      expect(cancelRes.status).toBe(200);
+      return { tripNo, vehicleNo, sealNo, status: 'CANCELLED' };
+    }
+
+    // Transition to READY_FOR_DISPATCH
+    await MMTripAPI.sealTrip(request, tripNo, {
+      sealType: 'PHYSICAL',
+      sealNo,
+      photoUrl: String(pm.environment.get('validSealPhotoUrl')),
+      branch: sourceBranch,
+      actor,
+    });
+    const drRes = await MMTripAPI.dispatchReady(request, tripNo, {
+      commodityClass: 'GENERAL',
+      checklist: {
+        vehicleTypeOk: true,
+        tarpaulinOk: true,
+        lashingOk: true,
+        gpsOk: true,
+        digitalLockOk: true,
+        tyreConditionOk: true,
+        documentsVerified: true,
+      },
+      actor,
+      companyCode,
+    });
+    expect([200, 201]).toContain(drRes.status);
+    if (targetStatus === 'READY_FOR_DISPATCH') {
+      return { tripNo, vehicleNo, sealNo, status: 'READY_FOR_DISPATCH' };
+    }
+
+    // Transition to GATE_OUT_IN_TRANSIT
+    const goRes = await MMTripAPI.gateOut(request, tripNo, {
+      branchCode: sourceBranch,
+      actor,
+      sealNo,
+    });
+    expect([200, 201]).toContain(goRes.status);
+    if (targetStatus === 'GATE_OUT_IN_TRANSIT') {
+      return { tripNo, vehicleNo, sealNo, status: 'GATE_OUT_IN_TRANSIT' };
+    }
+
+    // Transition to GATE_IN
+    const giRes = await MMTripAPI.gateIn(request, tripNo, {
+      branchCode: destinationBranch,
+      actor,
+      sealNo,
+      driverVerified: true,
+      driverPhotoUrl: String(pm.environment.get('validDriverPhotoUrl')),
+    });
+    expect([200, 201]).toContain(giRes.status);
+    if (targetStatus === 'GATE_IN') {
+      return { tripNo, vehicleNo, sealNo, status: 'GATE_IN' };
+    }
+
+    // Transition to COMPLETED
+    const compRes = await MMTripAPI.completeTrip(request, tripNo, {
+      reason: 'Automated test completed for status verification',
+      actor,
+    });
+    expect([200, 201]).toContain(compRes.status);
+    return { tripNo, vehicleNo, sealNo, status: 'COMPLETED' };
+  }
+
+  /**
+   * Reusable Multi-Leg SERVICE Touch-Point Flow:
+   * 1001 -> [1002] -> 2115
+   * Executes: Origin Load & Gate-Out -> Gate-In at 1002 -> 01 Get Touch-Point Movable Dockets ->
+   * 02 First Docket Manifest (replayed=false) -> 03 Idempotency Replay (replayed=true) ->
+   * 04 Second Docket Manifest Reuse -> Leg-2 Load & Gate-Out -> Final Gate-In, Unload Both Manifests & Complete at 2115.
+   */
+  public static async executeTouchPointMMFlow(request: APIRequestContext): Promise<{
+    tripNo: string;
+    originDocketNo: string;
+    originManifestNo: string;
+    touchPointDocket1: string;
+    touchPointDocket2: string;
+    touchPointManifestNo: string;
+  }> {
+    const mmBaseUrl = BaseAPI.getServiceUrl('mm');
+    const networkBaseUrl = BaseAPI.getServiceUrl('network');
+    const token = await BaseAPI.ensureAuthToken(request);
+    const headers = BaseAPI.getDefaultGatewayHeaders(token);
+
+    const companyCode = Number(pm.environment.get('companyCode'));
+    const sourceBranch = String(pm.environment.get('sourceBranch'));
+    const intermediateBranch = String(pm.environment.get('intermediateBranch'));
+    const destinationBranch = String(pm.environment.get('destinationBranch'));
+    const serviceRouteType = String(pm.environment.get('serviceRouteType'));
+    const activeTouchPointRouteCode = String(pm.environment.get('activeTouchPointRouteCode'));
+    const vehicleType = String(pm.environment.get('vehicleType'));
+    const vehicleCapacityKg = Number(pm.environment.get('vehicleCapacityKg'));
+    const vehicleOwnership = String(pm.environment.get('vehicleOwnership'));
+    const gpsStatus = String(pm.environment.get('gpsStatus'));
+    const priority = String(pm.environment.get('priority'));
+    const driverCode = String(pm.environment.get('planDriverCode'));
+    const driverName = String(pm.environment.get('driverName'));
+    const driverMobile = String(pm.environment.get('driverMobile'));
+    const actor = String(pm.environment.get('actor'));
+    const approverActor = String(pm.environment.get('approverActor'));
+    const priorityAirMode = String(pm.environment.get('priorityAirMode'));
+    const validSealPhotoUrl = String(pm.environment.get('validSealPhotoUrl'));
+    const validDriverPhotoUrl = String(pm.environment.get('validDriverPhotoUrl'));
+
+    const sfx = `${Date.now()}`.slice(-6);
+
+    // Ensure SERVICE route RT-TP-17619 (1001 -> [1002] -> 2115) is ACTIVE
+    const rtCheck = await request.get(`${networkBaseUrl}/api/v1/routes/${activeTouchPointRouteCode}`, { headers });
+    if (rtCheck.status() !== 200) {
+      await request.post(`${networkBaseUrl}/api/v1/routes`, {
+        data: {
+          companyCode,
+          routeCode: activeTouchPointRouteCode,
+          routeType: serviceRouteType,
+          routeNature: String(pm.environment.get('routeNature')),
+          sourceBranch,
+          destinationBranch,
+          distanceKm: 220,
+          tatHoursRegular: 28,
+          tatHoursSpeed: 22,
+          ratePerKm: 12,
+          routeCost: 2640,
+          validFrom: String(pm.environment.get('validFrom')),
+          validTo: String(pm.environment.get('validTo')),
+          frequency: String(pm.environment.get('frequency')),
+          runsPerDay: 1,
+          scheduleStartTimes: [String(pm.environment.get('serviceStartTime'))],
+          touchPoints: [
+            { branchCode: intermediateBranch, arrivalDay: 0, arrivalTime: '12:00:00', departureDay: 0, departureTime: '13:00:00' },
+          ],
+          createdBy: actor,
+        },
+        headers,
+      });
+      await request.post(`${networkBaseUrl}/api/v1/routes/${activeTouchPointRouteCode}/submit`, { data: { submittedBy: actor }, headers });
+      await request.post(`${networkBaseUrl}/api/v1/routes/${activeTouchPointRouteCode}/approve`, { data: { approvedBy: approverActor }, headers });
+    }
+
+    await request.put(`${mmBaseUrl}/api/v1/mm/compliance-requirements`, {
+      data: {
+        companyCode,
+        commodityClass: 'GENERAL',
+        vehicleBody: 'CLOSED',
+        routeClass: serviceRouteType,
+        tarpaulinMandate: 'YES',
+        lashingMandate: 'YES',
+        gpsMandate: 'YES',
+        digitalLockMandate: 'OPTIONAL',
+        updatedBy: actor,
+      },
+      headers,
+    });
+
+    const originDocketNo = await MMWorkflow.createDocketAndWaitForMovablePool(request, sourceBranch, destinationBranch, `ORIG-${sfx}`);
+
+    const tripCreateRes = await request.post(`${mmBaseUrl}/api/v1/trips`, {
+      data: {
+        companyCode,
+        sourceBranch,
+        destinationBranch,
+        routeType: serviceRouteType,
+        routeCode: activeTouchPointRouteCode,
+        emptyTrip: false,
+        creationSource: 'MANUAL',
+        vehicleNo: `DL01TP${sfx.slice(-4)}`,
+        vehicleType,
+        vehicleCapacityKg,
+        vehicleOwnership,
+        gpsStatus,
+        digitalLock: false,
+        priority,
+        driverCode,
+        driverName,
+        driverMobile,
+        createdBy: actor,
+      },
+      headers,
+    });
+    expect(tripCreateRes.status()).toBe(201);
+    const tpTripNo = (await tripCreateRes.json())?.data?.tripNo;
+    pm.environment.set('touchPointTripNo', tpTripNo);
+
+    // Assign dock at sourceBranch
+    await MMWorkflow.ensureDockAssigned(request, tpTripNo, sourceBranch, actor, companyCode);
+
+    const mfRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/manifests?actor=${actor}`, { headers });
+    const mfBody = await mfRes.json().catch(() => ({}));
+    const mfList: string[] = mfBody?.data?.manifestNos || [];
+
+    const addOrigRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/dockets`, {
+      data: {
+        docketNo: originDocketNo,
+        destinationBranch,
+        serviceMode: priorityAirMode,
+        loadingBranch: sourceBranch,
+        totalBoxes: 1,
+        actualWeightKg: 10,
+        chargedWeightKg: 10,
+        actor,
+      },
+      headers,
+    });
+    expect([200, 201]).toContain(addOrigRes.status());
+    const originManifestNo = (await addOrigRes.json())?.data?.manifestNo || mfList[1];
+
+    const docScanOrig = await ManifestAPI.scanTripDocketDocument(request, tpTripNo, { docketNo: originDocketNo, companyCode, actor }, token);
+    expect(docScanOrig.status).toBe(200);
+
+    const origScan = await MMWorkflow.printAndScanBoxForLoad(request, originDocketNo, sourceBranch);
+    const loadBoxRes = await request.post(`${mmBaseUrl}/api/v1/manifests/${originManifestNo}/loading/boxes`, {
+      data: { docketNo: originDocketNo, boxCode: origScan.boxCode, scanEventId: origScan.loadScanId, actor, branch: sourceBranch },
+      headers,
+    });
+    expect([200, 201]).toContain(loadBoxRes.status());
+
+    const closeLoadRes = await request.post(`${mmBaseUrl}/api/v1/manifests/${originManifestNo}/loading/close`, {
+      data: { actor, branch: sourceBranch },
+      headers,
+    });
+    expect([200, 201]).toContain(closeLoadRes.status());
+
+    await ManifestAPI.pouchTripDocketDocument(request, tpTripNo, { docketNo: originDocketNo, companyCode, actor }, token);
+
+    const originSealNo = `SEAL-ORIG-${sfx}`;
+    const sealRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/seal`, {
+      data: { sealType: 'PHYSICAL', sealNo: originSealNo, photoUrl: validSealPhotoUrl, branch: sourceBranch, actor },
+      headers,
+    });
+    expect([200, 201]).toContain(sealRes.status());
+
+    const drRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/dispatch-ready`, {
+      data: {
+        commodityClass: 'GENERAL',
+        checklist: { vehicleTypeOk: true, tarpaulinOk: true, lashingOk: true, gpsOk: true, digitalLockOk: true },
+        actor,
+        companyCode,
+      },
+      headers,
+    });
+    expect([200, 201]).toContain(drRes.status());
+
+    const goRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/gate-out`, {
+      data: { gateBranch: sourceBranch, actor },
+      headers,
+    });
+    expect([200, 201]).toContain(goRes.status());
+
+    // Gate-In at intermediate Touch-Point 1002
+    const giTpRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/gate-in`, {
+      data: {
+        branch: intermediateBranch,
+        sealNoEntered: originSealNo,
+        scannedManifestNos: [],
+        driverPhotoUrl: validDriverPhotoUrl,
+        driverVerified: true,
+        actor,
+      },
+      headers,
+    });
+    expect(giTpRes.status()).toBe(200);
+
+    // 01: Get movable dockets at touch-point 1002 & capture same-destination pair
+    let mvTpRes = await ManifestAPI.getTouchPointMovableDockets(request, tpTripNo, intermediateBranch, { companyCode }, token);
+    let sameDestDockets = (mvTpRes.body?.data?.dockets || []).filter((d: any) => d.destinationBranch === destinationBranch);
+    while (sameDestDockets.length < 2) {
+      await MMWorkflow.createDocketAndWaitForMovablePool(request, intermediateBranch, destinationBranch, `TP-${Date.now().toString().slice(-4)}`);
+      mvTpRes = await ManifestAPI.getTouchPointMovableDockets(request, tpTripNo, intermediateBranch, { companyCode }, token);
+      sameDestDockets = (mvTpRes.body?.data?.dockets || []).filter((d: any) => d.destinationBranch === destinationBranch);
+    }
+    const touchPointDocket1 = sameDestDockets[0].docketNo;
+    const touchPointDocket2 = sameDestDockets[1].docketNo;
+
+    // 02: First docket manifest
+    const firstKey = `IK-WF-FIRST-${sfx}`;
+    const firstRes = await ManifestAPI.upsertTouchPointManifests(
+      request,
+      tpTripNo,
+      intermediateBranch,
+      { companyCode, idempotencyKey: firstKey, docketNos: [touchPointDocket1], actor },
+      token
+    );
+    expect(firstRes.status).toBe(201);
+    expect(firstRes.body?.data?.replayed).toBe(false);
+    const touchPointManifestNo = firstRes.body?.data?.manifests?.[0]?.manifestNo;
+
+    // 03: Replay same idempotencyKey
+    const replayRes = await ManifestAPI.upsertTouchPointManifests(
+      request,
+      tpTripNo,
+      intermediateBranch,
+      { companyCode, idempotencyKey: firstKey, docketNos: [touchPointDocket1], actor },
+      token
+    );
+    expect(replayRes.status).toBe(201);
+    expect(replayRes.body?.data?.replayed).toBe(true);
+    expect(replayRes.body?.data?.manifests?.[0]?.manifestNo).toBe(touchPointManifestNo);
+
+    // 04: Add second docket & reuse touch-point manifest
+    const secondRes = await ManifestAPI.upsertTouchPointManifests(
+      request,
+      tpTripNo,
+      intermediateBranch,
+      { companyCode, idempotencyKey: `IK-WF-SECOND-${sfx}`, docketNos: [touchPointDocket2], actor },
+      token
+    );
+    expect(secondRes.status).toBe(201);
+    expect(secondRes.body?.data?.replayed).toBe(false);
+    expect(secondRes.body?.data?.manifests?.[0]?.manifestNo).toBe(touchPointManifestNo);
+
+    // Scan documents, load boxes, close loading, pouch documents, re-seal & gate-out from 1002
+    for (const tpDoc of [touchPointDocket1, touchPointDocket2]) {
+      await ManifestAPI.scanTripDocketDocument(request, tpTripNo, { docketNo: tpDoc, companyCode, actor }, token);
+    }
+    const tpScan1 = await MMWorkflow.printAndScanBoxForLoad(request, touchPointDocket1, intermediateBranch);
+    const tpScan2 = await MMWorkflow.printAndScanBoxForLoad(request, touchPointDocket2, intermediateBranch);
+
+    // Assign dock at intermediateBranch
+    await MMWorkflow.ensureDockAssigned(request, tpTripNo, intermediateBranch, actor, companyCode);
+
+    const load1Res = await request.post(`${mmBaseUrl}/api/v1/manifests/${touchPointManifestNo}/loading/boxes`, {
+      data: { docketNo: touchPointDocket1, boxCode: tpScan1.boxCode, scanEventId: tpScan1.loadScanId, actor, branch: intermediateBranch },
+      headers,
+    });
+    expect([200, 201]).toContain(load1Res.status());
+
+    const load2Res = await request.post(`${mmBaseUrl}/api/v1/manifests/${touchPointManifestNo}/loading/boxes`, {
+      data: { docketNo: touchPointDocket2, boxCode: tpScan2.boxCode, scanEventId: tpScan2.loadScanId, actor, branch: intermediateBranch },
+      headers,
+    });
+    expect([200, 201]).toContain(load2Res.status());
+
+    const closeTpLoadRes = await request.post(`${mmBaseUrl}/api/v1/manifests/${touchPointManifestNo}/loading/close`, {
+      data: { actor, branch: intermediateBranch },
+      headers,
+    });
+    expect([200, 201]).toContain(closeTpLoadRes.status());
+
+    for (const tpDoc of [touchPointDocket1, touchPointDocket2]) {
+      await ManifestAPI.pouchTripDocketDocument(request, tpTripNo, { docketNo: tpDoc, companyCode, actor }, token);
+    }
+
+    const tpSealNo = `SEAL-TP-${sfx}`;
+    const tpSealRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/seal`, {
+      data: { sealType: 'PHYSICAL', sealNo: tpSealNo, photoUrl: validSealPhotoUrl, branch: intermediateBranch, actor },
+      headers,
+    });
+    expect([200, 201]).toContain(tpSealRes.status());
+
+    const tpDrRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/dispatch-ready`, {
+      data: {
+        commodityClass: 'GENERAL',
+        checklist: { vehicleTypeOk: true, tarpaulinOk: true, lashingOk: true, gpsOk: true, digitalLockOk: true },
+        actor,
+        companyCode,
+      },
+      headers,
+    });
+    expect([200, 201]).toContain(tpDrRes.status());
+
+    const tpGoRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/gate-out`, {
+      data: { gateBranch: intermediateBranch, actor },
+      headers,
+    });
+    expect([200, 201]).toContain(tpGoRes.status());
+
+    // Final Gate-In & Unload at 2115
+    await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/gate-in`, {
+      data: {
+        branch: destinationBranch,
+        sealNoEntered: tpSealNo,
+        scannedManifestNos: [originManifestNo, touchPointManifestNo],
+        driverPhotoUrl: validDriverPhotoUrl,
+        driverVerified: true,
+        actor,
+      },
+      headers,
+    });
+
+    for (const [mfNo, items] of [
+      [originManifestNo, [{ docketNo: originDocketNo, boxCode: origScan.boxCode }]],
+      [
+        touchPointManifestNo,
+        [
+          { docketNo: touchPointDocket1, boxCode: tpScan1.boxCode },
+          { docketNo: touchPointDocket2, boxCode: tpScan2.boxCode },
+        ],
+      ],
+    ] as Array<[string, Array<{ docketNo: string; boxCode: string }>]>) {
+      await request.post(`${mmBaseUrl}/api/v1/manifests/${mfNo}/unloading/start`, {
+        data: { actor, branch: destinationBranch },
+        headers,
+      });
+      for (const item of items) {
+        const inScan = await ScanningAPI.recordScan(request, {
+          boxCode: item.boxCode,
+          eventType: 'IN_SCAN',
+          scanStage: 'UNLOAD',
+          branchCode: destinationBranch,
+          scannedBy: actor,
+          deviceId: 'DEV-DEST-01',
+          companyCode,
+          expectedDocketNo: item.docketNo,
+        });
+        const inScanId = inScan.body?.data?.publicEventId || inScan.body?.data?.id;
+        await request.post(`${mmBaseUrl}/api/v1/manifests/${mfNo}/unloading/boxes`, {
+          data: { docketNo: item.docketNo, boxCode: item.boxCode, scanEventId: inScanId, actor, branch: destinationBranch },
+          headers,
+        });
+      }
+      await request.post(`${mmBaseUrl}/api/v1/manifests/${mfNo}/unloading/close`, {
+        data: { actor, branch: destinationBranch },
+        headers,
+      });
+    }
+
+    const compRes = await request.post(`${mmBaseUrl}/api/v1/trips/${tpTripNo}/complete`, {
+      data: { reason: 'Multi-leg touch-point trip completed', actor },
+      headers,
+    });
+    expect(compRes.status()).toBe(200);
+
+    return {
+      tripNo: tpTripNo,
+      originDocketNo,
+      originManifestNo,
+      touchPointDocket1,
+      touchPointDocket2,
+      touchPointManifestNo,
+    };
+  }
 }
+
+
